@@ -5,7 +5,7 @@ from PySide6.QtCore import Qt
 from PySide6.QtWidgets import QApplication, QMainWindow, QPushButton, QVBoxLayout, QWidget, QDialog, QPlainTextEdit, \
     QHBoxLayout
 from core_lib.qt.hack import move_window_to_center
-from core_lib.unclassified import get_latest_version, get_version_manifest, get_specific_version_manifest_url, \
+from core_lib.game.version_info import get_version_manifest, get_latest_version, get_specific_version_manifest_url, \
     fetch_specific_version_manifest, find_useful_part_in_specific_version_manifest
 
 
