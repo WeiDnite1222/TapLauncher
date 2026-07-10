@@ -1,10 +1,10 @@
 import json
+import logging
 import requests
-
-from .core_init import logger
 
 MOJANG_VERSION_MANIFEST_V2 = "https://piston-meta.mojang.com/mc/game/version_manifest_v2.json"
 
+logger = logging.getLogger("Launcher.CoreLib")
 
 def get_version_manifest(manifest_url=MOJANG_VERSION_MANIFEST_V2, timeout=10) -> dict | None:
     logger.debug("Getting version manifest from {}".format(manifest_url))
@@ -32,7 +32,6 @@ def get_latest_version(version_manifest: dict, is_snapshot=False) -> None | str:
 
     if len(latest) == 0:
         logger.debug("No latest version section available in version manifest.")
-        logger.debug("Data: {}".format(json.dumps(version_manifest, indent=4)))
         return None
 
     latest_ver = latest.get("release" if not is_snapshot else "snapshot", None)
@@ -99,7 +98,7 @@ def find_useful_part_in_specific_version_manifest(spec_version_manifest: dict)\
     arguments = spec_version_manifest.get("arguments", {})
     asset_index = spec_version_manifest.get("assetIndex", {})
     downloads = spec_version_manifest.get("downloads", {})
-    java_version = spec_version_manifest.get("java_version", {})
+    java_version = spec_version_manifest.get("javaVersion", {})
     libraries = spec_version_manifest.get("libraries", [])
     main_class = spec_version_manifest.get("mainClass", None)
 
@@ -122,3 +121,29 @@ def find_useful_part_in_specific_version_manifest(spec_version_manifest: dict)\
         logger.debug("No main class section available in version manifest.")
 
     return arguments, asset_index, downloads, java_version, libraries, main_class
+
+def get_core_file_download_url_and_hash(version_manifest: dict, is_server=False) -> tuple[str, str] | tuple[None, None]:
+    core_downloads = version_manifest.get("downloads", {})
+
+    if len(core_downloads) == 0:
+        logger.debug("No downloads section available in version manifest.")
+        return None, None
+
+    core_name = "client" if not is_server else "server"
+    core_section = core_downloads.get(core_name, {})
+
+    if len(core_section) == 0:
+        logger.debug("No target core section available in version manifest.\n"
+                     "Wants: {}".format(core_name))
+        return None, None
+
+    download_url = core_section.get("url", None)
+    sha1 = core_section.get("sha1", None)
+
+    if download_url is None:
+        logger.debug("Core file url is None.\n")
+
+    if sha1 is None:
+        logger.debug("Core file sha1 is None.\n")
+
+    return download_url, sha1
