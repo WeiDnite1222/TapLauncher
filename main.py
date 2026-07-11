@@ -1,9 +1,11 @@
+import os
 import sys
 import argparse
 import logging
 
 from app import Launcher
 import tkinter as tk
+from tkinter import messagebox
 
 from core_lib.log.default import DEFAULT_FORMAT, DEFAULT_DATE_FORMAT, get_colorful_handler
 
@@ -45,6 +47,8 @@ def select_mode() -> None | str:
 def tui_entry():
     logger = logging.getLogger("TestLauncher.Tui")
     logger.info("Wow tui is unfinished")
+    return 0
+
 
 def main():
     root_logger = logging.getLogger()
@@ -54,9 +58,10 @@ def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("-m", "--mode", choices=['lightweight', 'full', 'choice'], default='choice',
                         help="Select mode (lightweight for tui, full is gui,"
-                             "choice for a mode select window)", required=False)
+                             "choice for a mode select window) (TUI is not implemented)", required=False)
     parser.add_argument("-d", "--debug", action="store_true",
                         help="Enable debug mode", default=False)
+    parser.add_argument("-wd", "--work-dir", default=os.getcwd(), help="Work directory")
 
     args, unknown = parser.parse_known_args()
     for arg in unknown:
@@ -73,6 +78,21 @@ def main():
         mode = args.mode
 
     debug = args.debug
+
+    # check workdir
+    if not os.path.exists(args.work_dir) or not os.path.isdir(args.work_dir):
+        if mode == "full":
+            messagebox.showerror("Error", f"Specified work directory \"{args.work_dir}\" does not exist or"
+                                          " is not a directory.")
+        else:
+            logger.error("Work directory '%s' does not exist. Exiting..." % args.work_dir)
+
+        sys.exit(-1)
+
+    if os.getcwd() != args.work_dir:
+        os.chdir(args.work_dir)
+
+    logger.info("Current working directory is {}".format(args.work_dir))
 
     # Init lib
     level = logging.DEBUG if debug else logging.INFO
@@ -93,6 +113,7 @@ def main():
     else:
         logger.error("Unknown mode '%s'" % mode)
         sys.exit(1)
+
 
 if __name__ == '__main__':
     main()

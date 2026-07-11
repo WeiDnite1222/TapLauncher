@@ -1,5 +1,8 @@
+from __future__ import annotations
 import hashlib
 import logging
+import platform
+import zipfile
 from collections.abc import Callable
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from pathlib import Path
@@ -7,7 +10,7 @@ from typing import List
 
 import requests
 
-from core_lib.common.exception import HashMismatchException
+from .exception import HashMismatchException
 
 DEFAULT_HASH_CHUNK_SIZE = 4096
 DEFAULT_DOWNLOAD_CHUNK_SIZE = 4096
@@ -134,11 +137,12 @@ class FileObject:
         return self.__path.exists()
 
 
-def download_file(file: FileObject, overwrite=True) -> FileObject | Exception:
+def download_file(file: FileObject, overwrite=True, progress_callback: Callable[int]=None) -> FileObject | Exception:
     """
     Download file from url
     :param file: File (Objected)
     :param overwrite: Overwrite existing file
+    :param progress_callback: Callback function called with progress information
     :return:
     """
 
@@ -153,6 +157,8 @@ def download_file(file: FileObject, overwrite=True) -> FileObject | Exception:
     logger.debug("Downloading file {} to {}".format(file.url, file))
 
     with requests.get(file.url, stream=True) as r:
+        current_chunk = 0
+        total_bytes = r.headers.get("content-length", None)
         logger.debug("URL: {}".format(file.url))
         logger.debug("Response code: {}".format(r.status_code))
 
@@ -162,6 +168,11 @@ def download_file(file: FileObject, overwrite=True) -> FileObject | Exception:
                     break
 
                 f.write(chunk)
+                current_chunk += 1
+
+                if callable(progress_callback) and total_bytes is not None:
+                    current_progress = ((current_chunk * DEFAULT_DOWNLOAD_CHUNK_SIZE) / int(total_bytes) ) * 100
+                    progress_callback(file.name, current_progress)
 
     if file.expected_sha256 and not file.verify_sha256():
         raise HashMismatchException("sha256", file.sha256, file.expected_sha256, file.posix_path)
@@ -178,18 +189,20 @@ def download_file(file: FileObject, overwrite=True) -> FileObject | Exception:
     return file
 
 def download_multiple_files(files: List[FileObject], download_callback: Callable[str]=None,
-                            max_workers=THREADED_DOWNLOAD_MAX_WORKERS) \
+                            max_workers=THREADED_DOWNLOAD_MAX_WORKERS, progress_callback: Callable[str]=None) \
         -> List[FileObject]:
     """
     Download multiple files
     :param download_callback:
     :param files:
     :param max_workers:
+    :param progress_callback:
     :return: List of file objects that download failed.
     """
 
     fails = []
 
+    files_count = 0
     with ThreadPoolExecutor(max_workers=max_workers) as executor:
         future_to_file = {executor.submit(download_file, file): file for file in files}
 
@@ -197,12 +210,48 @@ def download_multiple_files(files: List[FileObject], download_callback: Callable
             file = future_to_file[future]
 
             try:
+                files_count += 1
                 future.result()
                 if callable(download_callback):
                     download_callback(file.posix_path)
+
+                if callable(progress_callback):
+                    progress_callback(f"{len(files)} Files", files_count / len(files) * 100)
             except Exception as exc:
                 logger.error("Unable to download file {}: {}".format(file.posix_path, exc))
                 fails.append(file)
 
+
     return fails
+
+def unzip(file: FileObject, destination: Path, target_extract_dir: Path | None=None, exclude: list[str] | None = None):
+    with zipfile.ZipFile(file.posix_path, "r") as archive:
+
+        if target_extract_dir is None and exclude is None:
+            archive.extractall(path=destination)
+        else:
+            for member in archive.namelist():
+                # Ignore exclude file.
+                if any(member.startswith(pattern) for pattern in exclude):
+                    continue
+
+                if member.startswith(target_extract_dir.as_posix()):
+                    archive.extract(member, destination)
+
+def get_platform_info():
+    """
+    Get information about the current platform.
+    :return:
+        platform_name: str, architecture: str, os_version: str
+    """
+    platform_name = platform.system().lower()
+    arch = platform.uname().machine.lower()
+    os_version = platform.version()
+
+    if platform_name == "darwin":
+        os_version = platform.mac_ver()[0]
+    elif platform_name == "linux":
+        os_version = platform.release()
+
+    return platform_name, arch, os_version
 

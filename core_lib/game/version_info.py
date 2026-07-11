@@ -3,6 +3,56 @@ import logging
 import requests
 
 MOJANG_VERSION_MANIFEST_V2 = "https://piston-meta.mojang.com/mc/game/version_manifest_v2.json"
+MOJANG_LIBRARIES_ENDPOINT = "https://libraries.minecraft.net/"
+
+NATIVE_OS_KEY_MAP = {
+    "darwin": "macos",
+    "macos": "macos",
+    "osx": "macos",
+    "linux": "linux",
+    "windows": "windows",
+}
+
+NATIVE_OS_RULE_MAP = {
+    "darwin": "osx",
+    "macos": "osx",
+    "osx": "osx",
+    "linux": "linux",
+    "windows": "windows",
+}
+
+NATIVE_ARCH_KEY_MAP = {
+    "x86": "x86",
+    "i386": "x86",
+    "i486": "x86",
+    "i586": "x86",
+    "i686": "x86",
+
+    "x86_64": "x86_64",
+    "amd64": "x86_64",
+
+    "aarch64": "arm64",
+    "arm64": "arm64",
+    "aarch_64": "arm64",
+}
+
+NATIVE_OLD_TO_NEW_ARCH = {
+    "32": "x86",
+    "64": "x86_64",
+
+    "x86": "x86",
+    "x86_64": "x86_64",
+    "amd64": "x86_64",
+
+    "aarch64": "arm64",
+    "arm64": "arm64",
+}
+
+NATIVE_NEW_TO_OLD_ARCH = {
+    "x86": "32",
+    "x86_64": "64",
+}
+
 
 logger = logging.getLogger("Launcher.CoreLib")
 
@@ -43,17 +93,59 @@ def get_latest_version(version_manifest: dict, is_snapshot=False) -> None | str:
 
     return latest_ver
 
+def get_all_versions(version_manifest: dict, is_snapshot=False,
+                     include_all_type=False, specific_type=None) -> list:
+    all_vers = version_manifest.get("versions", [])
+
+    if len(all_vers) == 0:
+        logger.debug("No version section available in version manifest.")
+        return []
+
+    if not specific_type:
+        target_type = "release" if not is_snapshot else "snapshot"
+    else:
+        target_type = specific_type
+
+    filtered = []
+
+    for ver in all_vers:
+        ver_id = ver.get("id", None)
+        ver_type = ver.get("type")
+
+        logger.debug("Ver: {}, Type: {}".format(ver_id, ver_type))
+
+        if ver_type == target_type or include_all_type:
+            filtered.append(ver)
+
+    if len(filtered) == 0:
+        logger.debug("No version matches specified type: {}".format(target_type))
+
+    return filtered
+
+def get_available_version_types(version_manifest: dict) -> list:
+    all_vers = version_manifest.get("versions", [])
+
+    if len(all_vers) == 0:
+        logger.debug("No version section available in version manifest.")
+        return []
+
+    types = []
+
+    for ver in all_vers:
+        ver_type = ver.get("type")
+
+        if ver_type not in types:
+            types.append(ver_type)
+
+    return types
 
 def get_specific_version_manifest_url(version_manifest: dict,
-                                      version_id: str, is_snapshot=False) -> str | None:
+                                      version_id: str) -> str | None:
     versions = version_manifest.get("versions", [])
 
     if len(versions) == 0:
         logger.debug("No version section available in version manifest.")
         return None
-
-    ver_type = "release" if not is_snapshot else "snapshot"
-    versions = [version for version in versions if version.get("type") ==  ver_type]
 
     for version in versions:
         if version.get("id") == version_id:
@@ -69,6 +161,30 @@ def get_specific_version_manifest_url(version_manifest: dict,
 
     return None
 
+def get_specific_version_manifest_url_and_hash(version_manifest: dict,
+                                              version_id: str) -> tuple[str,str] | tuple[None, None]:
+    versions = version_manifest.get("versions", [])
+
+    if len(versions) == 0:
+        logger.debug("No version section available in version manifest.")
+        return None, None
+
+    for version in versions:
+        if version.get("id") == version_id:
+            specific_ver_manifest_url = version.get("url", None)
+            specific_ver_manifest_hash = version.get("hash", None)
+
+            if specific_ver_manifest_url is None:
+                logger.debug("Specific version manifest URL not available in version manifest.")
+
+            if specific_ver_manifest_hash is None:
+                logger.debug("Specific version manifest hash not available in version manifest.")
+
+            return specific_ver_manifest_url, specific_ver_manifest_hash
+
+    logger.debug("No version section available in version manifest.")
+
+    return None, None
 
 def fetch_specific_version_manifest(version_manifest: dict, spec_version: str) -> dict | None:
     ver_url = get_specific_version_manifest_url(version_manifest, spec_version)
