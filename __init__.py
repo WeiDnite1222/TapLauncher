@@ -14,5 +14,6 @@ This launcher should adheres to the following rules:
 3: Be cool and fun
 4: No AI slop (Nobody wants to read spaghetti code that made by AI)
 5: Freedom just like the bird
+6: Don't repeat yourself (originated from Django)
 """
 __website__ = "https://repo.weispace.net/wei/Launcher"

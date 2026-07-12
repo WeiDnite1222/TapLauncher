@@ -10,7 +10,7 @@ from typing import List
 
 import requests
 
-from .exception import HashMismatchException
+from .exception import HashMismatchException, DownloadException
 
 DEFAULT_HASH_CHUNK_SIZE = 4096
 DEFAULT_DOWNLOAD_CHUNK_SIZE = 4096
@@ -149,30 +149,35 @@ def download_file(file: FileObject, overwrite=True, progress_callback: Callable[
     file.path.parent.mkdir(parents=True, exist_ok=True)
 
     if file.exists and not overwrite:
-        raise Exception("File {} already exists. Use overwrite=True to overwrite.".format(file))
+        raise FileExistsError("File {} already exists. Use overwrite=True to overwrite.".format(file))
 
     if file.url is None:
-        raise Exception("Target file {} URL cannot be None.".format(file))
+        raise ValueError("Target file {} URL cannot be None.".format(file))
 
     logger.debug("Downloading file {} to {}".format(file.url, file))
 
-    with requests.get(file.url, stream=True) as r:
-        current_chunk = 0
-        total_bytes = r.headers.get("content-length", None)
-        logger.debug("URL: {}".format(file.url))
-        logger.debug("Response code: {}".format(r.status_code))
+    try:
+        with requests.get(file.url, stream=True) as r:
+            current_chunk = 0
+            total_bytes = r.headers.get("content-length", None)
+            logger.debug("URL: {}".format(file.url))
+            logger.debug("Response code: {}".format(r.status_code))
 
-        with file.path.open("wb") as f:
-            for chunk in r.iter_content(chunk_size=DEFAULT_DOWNLOAD_CHUNK_SIZE):
-                if not chunk:
-                    break
+            with file.path.open("wb") as f:
+                for chunk in r.iter_content(chunk_size=DEFAULT_DOWNLOAD_CHUNK_SIZE):
+                    if not chunk:
+                        break
 
-                f.write(chunk)
-                current_chunk += 1
+                    f.write(chunk)
+                    current_chunk += 1
 
-                if callable(progress_callback) and total_bytes is not None:
-                    current_progress = ((current_chunk * DEFAULT_DOWNLOAD_CHUNK_SIZE) / int(total_bytes) ) * 100
-                    progress_callback(file.name, current_progress)
+                    if callable(progress_callback) and total_bytes is not None:
+                        current_progress = ((current_chunk * DEFAULT_DOWNLOAD_CHUNK_SIZE) / int(total_bytes)) * 100
+                        progress_callback(file.name, current_progress)
+    except Exception as e:
+        raise DownloadException(
+            "An error occurred while downloading file {}. {}".format(file.url, e)
+        )
 
     if file.expected_sha256 and not file.verify_sha256():
         raise HashMismatchException("sha256", file.sha256, file.expected_sha256, file.posix_path)
@@ -190,17 +195,20 @@ def download_file(file: FileObject, overwrite=True, progress_callback: Callable[
 
 def download_multiple_files(files: List[FileObject], download_callback: Callable[str]=None,
                             max_workers=THREADED_DOWNLOAD_MAX_WORKERS, progress_callback: Callable[str]=None) \
-        -> List[FileObject]:
+        -> tuple[list[FileObject], list[FileObject]]:
     """
     Download multiple files
     :param download_callback:
     :param files:
     :param max_workers:
     :param progress_callback:
-    :return: List of file objects that download failed.
+    :return:
+        fails: List of file objects that download failed.
+        successes: List of file objects that download succeeded.
     """
 
     fails = []
+    successes = []
 
     files_count = 0
     with ThreadPoolExecutor(max_workers=max_workers) as executor:
@@ -212,6 +220,7 @@ def download_multiple_files(files: List[FileObject], download_callback: Callable
             try:
                 files_count += 1
                 future.result()
+                successes.append(file)
                 if callable(download_callback):
                     download_callback(file.posix_path)
 
@@ -222,21 +231,33 @@ def download_multiple_files(files: List[FileObject], download_callback: Callable
                 fails.append(file)
 
 
-    return fails
+    return fails, successes
 
-def unzip(file: FileObject, destination: Path, target_extract_dir: Path | None=None, exclude: list[str] | None = None):
-    with zipfile.ZipFile(file.posix_path, "r") as archive:
+def unzip(filepath: Path, destination: Path, exclude: list[str] | None = None, flatten: bool=False):
+    exclude = exclude or []
 
-        if target_extract_dir is None and exclude is None:
-            archive.extractall(path=destination)
-        else:
-            for member in archive.namelist():
-                # Ignore exclude file.
+    with zipfile.ZipFile(filepath.as_posix(), "r") as archive:
+        for member in archive.namelist():
+            # Ignore exclude file.
+            if any(member.startswith(pattern) for pattern in exclude):
+                continue
+
+            if flatten:
+                member_path = Path(member)
+
+                if member.endswith("/") or not member_path.name:
+                    continue
+
                 if any(member.startswith(pattern) for pattern in exclude):
                     continue
 
-                if member.startswith(target_extract_dir.as_posix()):
-                    archive.extract(member, destination)
+                target = destination / member_path.name
+
+                with archive.open(member) as source:
+                    with target.open("wb") as output:
+                        output.write(source.read())
+            else:
+                archive.extract(member, path=destination)
 
 def get_platform_info():
     """

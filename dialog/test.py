@@ -1,19 +1,27 @@
-import re
+import json
 import textwrap
 import threading
+import time
 from pathlib import Path
 
-from PySide6.QtCore import Qt, QObject, Signal
+from PySide6.QtCore import Qt, QObject, Signal, Slot
 from PySide6.QtWidgets import QPushButton, QVBoxLayout, QDialog, QPlainTextEdit, \
-    QHBoxLayout, QComboBox
+    QHBoxLayout, QComboBox, QMessageBox
 
-from core_lib.common.common import download_file, FileObject, download_multiple_files, get_platform_info
-from core_lib.game.library import generate_formatted_artifact_with_name, get_natives_platform_info, is_library_allowed, \
-    is_native_allowed, is_legacy_native_allowed
-from core_lib.game.version_info import get_version_manifest, \
-    fetch_specific_version_manifest, find_useful_part_in_specific_version_manifest, get_core_file_download_url_and_hash, \
-    get_all_versions, get_available_version_types, get_specific_version_manifest_url_and_hash
+from core_lib.common.common import download_file, FileObject, download_multiple_files
+from core_lib.common.exception import VersionNotSelectedException, UnsupportedPlatformException, \
+    NativeResolveException, DownloadException, DependencyException, VersionManifestFetchException, \
+    VersionManifestSaveException, NoSpecifiedVersionKeyException
+from core_lib.game.library import collect_native_artifacts, download_libraries, unzip_natives, collect_library_artifacts
+
+from core_lib.game.version_info import (find_useful_part_in_specific_version_manifest,
+                                        get_core_file_download_url_and_hash, \
+                                        get_all_versions, get_available_version_types, \
+                                        fetch_and_save_version_manifest, get_specific_version_manifest_url_and_hash)
 from core_lib.qt import messagebox
+from core_lib.qt.hack import is_main_thread
+
+MAX_DOWNLOAD_ATTEMPTS = 3
 
 
 class TestDialog(QDialog):
@@ -28,10 +36,6 @@ class TestDialog(QDialog):
         self.button.setObjectName("ActionButton")
         self.button.clicked.connect(self.run_test)
 
-        self.button_6 = QPushButton("Download Version Data")
-        self.button_6.setObjectName("ActionButton")
-        self.button_6.clicked.connect(self.run_download_specific_version_manifest)
-
         self.button_2 = QPushButton("Download client")
         self.button_2.setObjectName("ActionButton")
         self.button_2.clicked.connect(self.run_download_client)
@@ -40,13 +44,9 @@ class TestDialog(QDialog):
         self.button_3.setObjectName("ActionButton")
         self.button_3.clicked.connect(self.run_download_libraries)
 
-        self.button_4 = QPushButton("Download and unzip natives")
+        self.button_4 = QPushButton("Refresh versions")
         self.button_4.setObjectName("ActionButton")
-        self.button_4.clicked.connect(lambda : self.run_download_and_unzip_natives())
-
-        self.button_5 = QPushButton("Refresh versions")
-        self.button_5.setObjectName("ActionButton")
-        self.button_5.clicked.connect(self.load_all_version)
+        self.button_4.clicked.connect(self.load_all_version)
 
         self.ver_dropdown = QComboBox()
         self.ver_dropdown.setObjectName("Dropdown")
@@ -68,14 +68,12 @@ class TestDialog(QDialog):
         self.right_layout.setObjectName("RightLayout")
         self.right_layout.setAlignment(Qt.AlignmentFlag.AlignRight)
         self.right_layout.addWidget(self.button)
-        self.right_layout.addWidget(self.button_6)
         self.right_layout.addWidget(self.button_2)
         self.right_layout.addWidget(self.button_3)
-        self.right_layout.addWidget(self.button_4)
         self.right_layout.addStretch()
         self.right_layout.addWidget(self.ver_type_dropdown)
         self.right_layout.addWidget(self.ver_dropdown)
-        self.right_layout.addWidget(self.button_5)
+        self.right_layout.addWidget(self.button_4)
         self.right_layout.setContentsMargins(0, 10, 0, 0)
 
         self.layout.addLayout(self.right_layout)
@@ -133,6 +131,14 @@ class TestDialog(QDialog):
             )
         )
 
+        self.widget_signal.show_warning_message.connect(
+            lambda msg: messagebox.warning(
+                self.parent,
+                "Warning",
+                message=msg
+            )
+        )
+
         self.widget_signal.show_info_message.connect(
             lambda msg: messagebox.info(
                 self.parent,
@@ -149,13 +155,29 @@ class TestDialog(QDialog):
             lambda widget: widget.setDisabled(True)
         )
 
+        self.widget_signal.askyesno.connect(
+            self.ask_request
+        )
+
+        self.widget_signal.get_selected_ver.connect(
+            self.get_selected_ver
+        )
+
+        self.widget_signal.get_selected_type.connect(
+            self.get_selected_type
+        )
+
+        self.widget_signal.clean_output.connect(
+            lambda : self.output.clear()
+        )
+
         self.load_all_types()
 
     class DownloadSignal(QObject):
         log = Signal(str)
         finished = Signal(int)
         failed = Signal(str)
-        progress = Signal(str, int)
+        progress = Signal(str, float)
 
     class WidgetSignal(QObject):
         clean_ver_types_dropdown = Signal()
@@ -163,9 +185,47 @@ class TestDialog(QDialog):
         update_vers_dropdown = Signal(list)
         update_types_dropdown = Signal(list)
         show_error_message = Signal(str)
+        show_warning_message = Signal(str)
         show_info_message = Signal(str)
         enable_widget = Signal(object)
         disable_widget = Signal(object)
+        askyesno = Signal(dict)  # {"title", "targetEvent", "message", "result"}
+        get_selected_ver = Signal(dict)
+        get_selected_type = Signal(dict)
+        clean_output = Signal()
+
+    @Slot(dict)
+    def ask_request(self, context: dict):
+        title = context.get("title", "Info")
+        message = context.get("message", "No content")
+        event = context.get("event", None)
+        msg = QMessageBox.question(
+            self,
+            title,
+            message,
+            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+            QMessageBox.StandardButton.Yes,
+        )
+
+        if msg == QMessageBox.StandardButton.Yes and type(event) == threading.Event:
+            context["result"] = True
+
+        if isinstance(event, threading.Event):
+            event.set()
+
+    @Slot(dict)
+    def get_selected_ver(self, context: dict):
+        context["version"] = self.ver_dropdown.currentText()
+        event = context.get("event", None)
+        if isinstance(event, threading.Event):
+            event.set()
+
+    @Slot(dict)
+    def get_selected_type(self, context: dict):
+        context["type"] = self.ver_type_dropdown.currentText()
+        event = context.get("event", None)
+        if isinstance(event, threading.Event):
+            event.set()
 
     @staticmethod
     def get_progress(value):
@@ -199,84 +259,112 @@ class TestDialog(QDialog):
         if len(self.ver_dropdown.currentText()) == 0:
             self.ver_dropdown.setCurrentIndex(0)
 
+    def _get_selected_version_unsafe(self):
+        if is_main_thread():
+            ver = self.ver_dropdown.currentText()
+        else:
+            event = threading.Event()
+            context = {
+                "event": event,
+            }
+            self.widget_signal.get_selected_ver.emit(context)
+
+            if not event.wait(10):
+                raise VersionNotSelectedException(
+                    "Timed out while waiting for selected version from the UI thread.",
+                    user_message="Unable to read selected version from the UI. Please try again."
+                )
+
+            ver = context.get("version", None)
+
+        if not ver:
+            raise VersionNotSelectedException()
+
+        return ver
+
+    def get_selected_version(self):
+        try:
+            ver = self._get_selected_version_unsafe()
+            return ver
+        except VersionNotSelectedException as e:
+            self.widget_signal.show_error_message.emit(
+                "Select a version before continuing.\n"
+                "Details: {}".format(e.user_message)
+            )
+            return None
+
     def run_test(self):
         self.button.setDisabled(True)
 
-        self.output.clear()
-        data = get_version_manifest()
-        ver = self.ver_dropdown.currentText()
+        try:
+            self.output.clear()
+            ver = self.get_selected_version()
 
-        if len(ver) == 0 or ver is None:
-            messagebox.error(
-                self.parent,
-                "Error",
-                "Please select a version before running the test.",
+            if not ver:
+                return
+
+            ver_data = self.get_cached_version_manifest(ver)
+
+            arguments, asset_index, downloads, java_version, libraries, main_class, legacy_game_args = (
+                find_useful_part_in_specific_version_manifest(ver_data))
+
+            content = textwrap.dedent(f"""\
+                    Arguments: {arguments}\n
+
+                    Asset: {asset_index}\n
+
+                    Downloads: {downloads}\n
+
+                    Java Version: {java_version}\n
+
+                    Libraries: {libraries}\n
+
+                    Main Class: {main_class}\n
+
+                    Extra:
+                    minecraftArguments: {legacy_game_args}
+                    """)
+            self.output.setPlainText(content)
+        except Exception as e:
+            self.widget_signal.show_error_message.emit(
+                "Failed to run test. Details: {}".format(e)
             )
-
-        ver_data = fetch_specific_version_manifest(data, ver)
-        arguments, asset_index, downloads, java_version, libraries, main_class = (
-            find_useful_part_in_specific_version_manifest(ver_data))
-
-        content = textwrap.dedent(f"""\
-        Arguments: {arguments}\n
-
-        Asset: {asset_index}\n
-
-        Downloads: {downloads}\n
-
-        Java Version: {java_version}\n
-
-        Libraries: {libraries}\n
-
-        Main Class: {main_class}\n
-        """)
-
-        self.output.setPlainText(content)
-        self.button.setDisabled(False)
-
-    def run_download_specific_version_manifest(self):
-        self.button_6.setDisabled(True)
-
-        self.output.clear()
-
-        thread = threading.Thread(
-            target=self._download_specific_version_manifest,
-            daemon=True,
-        )
-        thread.start()
+        finally:
+            self.button.setDisabled(False)
 
     def run_download_client(self):
         self.button_2.setDisabled(True)
 
         self.output.clear()
 
+        ver = self.get_selected_version()
+
+        if not ver:
+            self.widget_signal.enable_widget.emit(self.button_2)
+            return
+
         thread = threading.Thread(
             target=self._download_client,
             daemon=True,
+            args=(ver,)
         )
         thread.start()
-
-        # self.output.setPlainText("Client downloaded." if dest.exists() else "Client not found.")
 
     def run_download_libraries(self):
         self.button_3.setDisabled(True)
 
         self.output.clear()
 
+        ver = self.get_selected_version()
+
+        if not ver:
+            self.widget_signal.enable_widget.emit(self.button_3)
+            return
+
         thread = threading.Thread(
             target=self._download_libraries_process,
             daemon=True,
-        )
-        thread.start()
-
-    def run_download_and_unzip_natives(self):
-        self.button_4.setDisabled(True)
-
-        self.output.clear()
-
-        thread = threading.Thread(
-            target=self._download_and_unzip_natives,
-            daemon=True,
+            args=(ver,)
         )
         thread.start()
 
@@ -302,297 +390,285 @@ class TestDialog(QDialog):
     # All functions below that must be run in background thread
     def _load_all_types(self):
         self.widget_signal.clean_ver_types_dropdown.emit()
-        data = get_version_manifest()
+
+        data = self.get_cached_version_manifest()
+        if not data:
+            return
+
         ver_types = get_available_version_types(data)
         self.widget_signal.update_types_dropdown.emit(ver_types)
 
     def _load_all_version(self, ver_type):
         self.widget_signal.clean_vers_dropdown.emit()
-        data = get_version_manifest()
+
+        data = self.get_cached_version_manifest()
+        if not data:
+            return
+
         vers = get_all_versions(
             data,
-            specific_type=ver_type
+            specified_type=ver_type
         )
         self.widget_signal.update_vers_dropdown.emit(vers)
 
-    def _download_specific_version_manifest(self, ver=None):
-        data = get_version_manifest()
+    #
+    # ============ Version Data Cache ============
+    #
+    @property
+    def version_manifest_path(self) -> Path:
+        return Path(self.app.work_dir, "versions", "version_manifest_v2.json")
 
-        if not ver:
-            ver = self.ver_dropdown.currentText()
+    def get_specific_version_manifest_path(self, target_version: str) -> Path | None:
+        return Path(self.app.work_dir, "versions", target_version, f"{target_version}.json")
 
-        if not ver:
-            self.widget_signal.show_error_message.emit(
-                "Select a version before download the version manifest."
-            )
-            return
-
-        ver_manifest_url, sha1 = get_specific_version_manifest_url_and_hash(data, ver)
-
-        if ver_manifest_url is None:
-            self.widget_signal.show_error_message.emit(
-                f"Unable to get the version {ver} manifest url."
-            )
-            return
+    def switch_between_specific_path(self, specified_ver: str | None = None):
+        if specified_ver is None:
+            path = self.version_manifest_path
         else:
-            self.download_signal.log.emit(f"Version {ver} manifest url: {ver_manifest_url} sha1: {sha1}")
+            path = self.get_specific_version_manifest_path(specified_ver)
 
-        filepath = Path(self.app.work_dir, "versions", ver, f"{ver}.json")
+        return path
 
-        manifest_file = FileObject(
-            filepath,
-            url=ver_manifest_url,
-            sha1=sha1,
-        )
-
-        if not manifest_file.exists or manifest_file.verify("sha1", sha1):
-            download_file(manifest_file, progress_callback=self.download_signal.progress.emit)
-
-        self.download_signal.log.emit(f"File {filepath} downloaded.")
-        self.widget_signal.enable_widget.emit(self.button_6)
-
-    def _download_client(self, ver=None):
-        data = get_version_manifest()
-
-        if not ver:
-            ver = self.ver_dropdown.currentText()
-
-        if not ver:
+    def _cache_version_manifest(self, specified_ver: str | None = None, root_manifest: dict | None = None) \
+            -> tuple[bool, dict | None]:
+        data = None
+        path = self.switch_between_specific_path(specified_ver)
+        try:
+            data = fetch_and_save_version_manifest(path, target_version=specified_ver, root_manifest=root_manifest)
+        except VersionManifestFetchException as e:
             self.widget_signal.show_error_message.emit(
-                "Select a version before download the client."
+                "Unable to fetch version manifest: {}".format(e.user_message),
             )
-            return
-
-        ver_data = fetch_specific_version_manifest(data, ver)
-        url, sha1 = get_core_file_download_url_and_hash(ver_data)
-
-        dest = Path(self.app.work_dir, "versions", ver, "client.jar")
-
-        file = FileObject(dest, url=url)
-
-        if sha1 is None:
-            self.app.logger.warning("Client has no sha1.")
-
-        if file.exists and file.verify("sha1", sha1):
-            self.download_signal.log.emit(f"Client existed and sha1 matches.")
-        elif url is not None:
-            download_file(file, progress_callback=self.download_signal.progress.emit)
-        elif not url:
-            self.download_signal.failed.emit("Download URL not found.")
-
-        self.download_signal.log.emit(f"Downloaded URL: {url}")
-        self.widget_signal.enable_widget.emit(self.button_2)
-
-    def _download_libraries_process(self, ver=None):
-        self.output.clear()
-
-        def log_file_downloaded(filepath):
-            self.download_signal.log.emit(f"Downloaded {filepath}.")
-
-        data = get_version_manifest()
-
-        if not ver:
-            ver = self.ver_dropdown.currentText()
-
-        if not ver:
+        except VersionManifestSaveException as e:
             self.widget_signal.show_error_message.emit(
-                "Select a version before download libraries."
+                "Unable to save version manifest: {}".format(e.user_message),
             )
-            self.widget_signal.enable_widget.emit(self.button_3)
-            return
+        except Exception as e:
+            self.widget_signal.show_error_message.emit(
+                "An unexpected error occurred while caching version manifest: {}".format(e),
+            )
 
-        ver_data = fetch_specific_version_manifest(data, ver)
-        _, _, _, _, libraries, _ = find_useful_part_in_specific_version_manifest(ver_data)
+        return True if data else False, data
 
-        output_dir = Path(self.app.work_dir, "libraries")
+    def _read_cached_version_manifest(self, specified_ver: str = None) -> dict | None:
+        path = self.switch_between_specific_path(specified_ver)
+        if not path.exists():
+            self.widget_signal.show_error_message.emit(
+                "Version manifest missing after check. Please try again later.",
+            )
+            return None
 
-        output_dir.mkdir(parents=True, exist_ok=True)
+        try:
+            version_manifest = json.loads(path.read_text())
+            return version_manifest
+        except Exception as e:
+            self.widget_signal.show_error_message.emit(
+                "Unable to read version manifest:\n{}".format(e),
+            )
+            return None
 
-        items = []
+    def get_cached_version_manifest(self, specified_ver: str = None, max_age: int = 3600) -> dict | None:
+        path = self.switch_between_specific_path(specified_ver)
+        file = FileObject(path)
+        sha1 = None
+        root_manifest = None
 
-        # Same as natives
-        _, _, os_version = get_platform_info()
-        platform_key_name, platform_rule_name, platform_arch_type = get_natives_platform_info()
+        if specified_ver:
+            root_manifest = self.get_cached_version_manifest()
 
-        for library in libraries:
-            name = library.get("name", "")
-            url = library.get("downloads", {}).get("artifact", {}).get("url")
-            sha1 = library.get("downloads", {}).get("artifact", {}).get("sha1")
-            relative_path = library.get("downloads", {}).get("artifact", {}).get("path")
-            rules = library.get("rules", [])
-            full_path = output_dir / relative_path
-            classifiers = library.get("downloads", {}).get("classifiers", {})
-            natives = library.get("natives", {})
+            if root_manifest is None:
+                return None
 
-            # Ignore natives
-            if (len(natives) > 0 or bool(re.search(r":natives-[^:]+$", name)) or
-                    any(native.startswith("natives-") for native in classifiers)):
-                continue
+            try:
+                _, sha1 = get_specific_version_manifest_url_and_hash(root_manifest, specified_ver)
+            except NoSpecifiedVersionKeyException as e:
+                self.widget_signal.show_error_message.emit(
+                    f"Version {specified_ver} does not exist in version manifest.\n{e.user_message}"
+                )
+                return None
 
-            if not url:
-                continue
+        if file.exists:
+            age = time.time() - path.stat().st_mtime
 
-            if not is_library_allowed(
-                    rules,
-                    platform_rule_name,
-                    platform_arch_type,
-                    os_version,
-            ):
-                self.app.logger.debug(f"Library {name} can't pass library rules.")
-                continue
+            # For root manifest
+            if not specified_ver and age < max_age:
+                return self._read_cached_version_manifest()
 
-            file = FileObject(full_path, url=url, sha1=sha1)
+            # Below are all for specific ver
+            if specified_ver and sha1 is None:
+                self.app.logger.warning("Specified version '{}' hash doesn't exist.".format(specified_ver))
+
+            # Also check sha1
+            if specified_ver and age < max_age and (sha1 is None or file.verify("sha1", sha1)):
+                return self._read_cached_version_manifest(specified_ver)
+
+        result, data = self._cache_version_manifest(specified_ver, root_manifest=root_manifest)
+
+        if not result:
+            return None
+
+        return data
+
+    #
+    # ============ Game Files ============
+    #
+    # INFO: All are not in main thread
+    def _download_client(self, ver: str):
+        try:
+            ver_data = self.get_cached_version_manifest(ver)
+
+            if not ver_data:
+                return
+
+            url, sha1 = get_core_file_download_url_and_hash(ver_data)
+
+            dest = Path(self.app.work_dir, "versions", ver, "client.jar")
+
+            file = FileObject(dest, url=url)
 
             if sha1 is None:
-                self.app.logger.warning(f"File {full_path} has no SHA1 hash.")
+                self.app.logger.warning("Client has no sha1.")
 
-            if file.exists and (sha1 is None or file.verify("sha1", sha1)):
-                log_file_downloaded(file.posix_path)
-                continue
+            if file.exists and file.verify("sha1", sha1):
+                self.download_signal.log.emit(f"Client existed and sha1 matches.")
+            elif url is not None:
+                download_file(file, progress_callback=self.download_signal.progress.emit)
+            elif not url:
+                self.download_signal.failed.emit("Download URL not found.")
 
-            items.append(file)
-
-        try:
-            fails = download_multiple_files(items,
-                                            progress_callback=self.download_signal.progress.emit)
-            self.download_signal.finished.emit(len(fails))
-        except Exception as e:
-            self.download_signal.failed.emit(e)
-
-        self.widget_signal.enable_widget.emit(self.button_3)
-
-    def _download_and_unzip_natives(self, ver=None, unspecified_arch_policy: str= "x86_64"):
-        valid_non_arch_values = {
-            "universal",
-            "x86",
-            "x86_64",
-            "arm64",
-        }
-
-        if unspecified_arch_policy not in valid_non_arch_values:
-            raise ValueError(
-                f"Unsupported considered_non_arch: "
-                f"{unspecified_arch_policy!r}"
-            )
-
-        try:
-            self.output.clear()
-            data = get_version_manifest()
-
-            if not ver:
-                ver = self.ver_dropdown.currentText()
-
-            if not ver:
-                self.widget_signal.show_error_message.emit(
-                    "Select a version before download natives."
-                )
-                self.widget_signal.enable_widget.emit(self.button_3)
-                return
-
-            filtered = []
-
-            # Convert current platform and architecture type to same formula
-            _, _, os_version = get_platform_info()
-            platform_key_name, platform_rule_name, platform_arch_type = get_natives_platform_info()
-
-            if platform_key_name is None or platform_arch_type is None or platform_rule_name is None:
-                self.app.logger.error("Platform or arch are not supported.")
-                self.widget_signal.show_error_message.emit("Current platform or arch are not supported.")
-                return
-
-            ver_data = fetch_specific_version_manifest(data, ver)
-            _, _, _, _, libraries, _ = find_useful_part_in_specific_version_manifest(ver_data)
-
-            for library in libraries:
-                name = library.get("name", "")
-                artifact = library.get("downloads", {}).get("artifact", {})
-                # For newer Minecraft (VER>1.7.10)
-                rules = library.get("rules", [])
-                # For legacy version (VER<1.8)
-                classifiers = library.get("downloads", {}).get("classifiers", {})
-                natives = library.get("natives", {})
-
-                result_artifact = None
-                is_natives = False
-
-                # Check if library is a native
-                if (len(natives) > 0 or bool(re.search(r":natives-[^:]+$", name)) or
-                        any(native.startswith("natives-") for native in classifiers)):
-                    is_natives = True
-
-                if not is_natives:
-                    continue
-
-                content = f"Name: {name}\nRaw Rules: {rules}\n\n"
-
-                if rules and classifiers:
-                    content += f"This native use multiple native rules!\n"
-                elif rules:
-                    content += f"This native use new native rules!\n"
-                elif classifiers:
-                    content += f"This native use legacy native rules!\n"
-
-                # =============== New rules ===============
-
-                # Parse action section
-                content += "Rules:\n"
-
-                if not is_library_allowed(
-                    rules,
-                    platform_rule_name,
-                    platform_arch_type,
-                    os_version,
-                ):
-                    self.app.logger.debug(f"Library {name} can't pass library rules.")
-                    continue
-
-                if is_native_allowed(
-                    name,
-                    platform_key_name,
-                    platform_arch_type,
-                ):
-                    result_artifact = generate_formatted_artifact_with_name(name, artifact)
-                    filtered.append(result_artifact)
-                    # For some reason, we still need to continue process because some version use multiple type of
-                    # classifier. (Such as 1.14.2)
-                else:
-                    self.app.logger.debug(f"Library {name} can't pass native rules.")
-
-                # =============== Old rules ===============
-                self.app.logger.debug(
-                    "Library {} doesn't have native key. This library may use old rule.".format(name)
-                )
-
-                result, result_artifact = is_legacy_native_allowed(
-                    natives,
-                    classifiers,
-                    platform_rule_name,
-                    platform_arch_type,
-                )
-
-                if not result:
-                    self.app.logger.debug(f"Library {name} can't pass legacy native rules.")
-                    continue
-                else:
-                    result_artifact = generate_formatted_artifact_with_name(name, result_artifact)
-
-                if result_artifact:
-                    filtered.append(result_artifact)
-
-                self.output.appendPlainText(
-                    content
-                )
-                self.app.logger.debug(content)
-
-            self.output.appendPlainText(
-                "Supported native count: {}".format(len(filtered))
-            )
-        except Exception as exc:
-            self.app.logger.exception(
-                "Unexpected exception occurred: {}".format(exc)
-            )
+            self.download_signal.log.emit(f"Downloaded URL: {url}")
+        except DownloadException as e:
             self.widget_signal.show_error_message.emit(
-                "Unexpected exception occurred while finding natives: {}".format(exc)
+                "Unable to download client while downloading it: {}".format(e.user_message),
+            )
+        except Exception as e:
+            self.widget_signal.show_error_message.emit(
+                "Unable to download client: {}".format(e),
             )
         finally:
-            self.button_4.setDisabled(False)
+            self.widget_signal.enable_widget.emit(self.button_2)
+
+    def _download_libraries_process(self, ver: str):
+        output_dir = Path(self.app.work_dir, "libraries")
+        output_dir.mkdir(parents=True, exist_ok=True)
+
+        try:
+            self.widget_signal.clean_output.emit()
+
+            ver_data = self.get_cached_version_manifest(ver)
+
+            if not ver_data:
+                return
+
+            # libraries
+            libraries = collect_library_artifacts(ver_data)
+
+            # natives
+            natives = collect_native_artifacts(ver_data)
+
+            # all
+            full = list(libraries)
+            full.extend(natives)
+
+            self.download_signal.log.emit(
+                "Supported native count: {}".format(len(natives))
+            )
+
+            # Start download
+            fails, successes = download_libraries(full, output_dir,
+                                                  progress_callback=self.download_signal.progress.emit)
+
+            download_ok, fails = self.redownload_files(fails)
+
+            if not download_ok:
+                self.widget_signal.show_error_message.emit(
+                    "Unable to continue process due to certain libraries download failed:\n"
+                    + "\n".join(file.posix_path for file in fails)
+                )
+            else:
+                # Start unzip natives
+                natives_dest = Path(self.app.work_dir, "versions", ver, "natives")
+                unzip_natives(natives, output_dir, natives_dest)
+        except DependencyException as e:
+            self.widget_signal.show_error_message.emit(
+                "Unable to collect library artifacts.\n"
+                f"{e.user_message}"
+            )
+        except DownloadException as e:
+            self.widget_signal.show_error_message.emit(
+                "Unable to collect library artifacts. An download error occurred:\n"
+                f"{e.user_message}"
+            )
+        except UnsupportedPlatformException as e:
+            self.widget_signal.show_error_message.emit(
+                "Unable to collect native artifacts.\n"
+                f"{e.user_message}"
+            )
+        except NativeResolveException as e:
+            self.widget_signal.show_error_message.emit(
+                "Unable to collect native artifacts.\n"
+                f"{e.user_message}"
+            )
+        except Exception as e:
+            self.widget_signal.show_error_message.emit(
+                "Unable to collect library artifacts. An unknown error occurred:\n"
+                f"{str(e) + f"\n{type(e)}"}"
+            )
+        finally:
+            self.widget_signal.enable_widget.emit(self.button_3)
+
+    def redownload_files(self, files: list[FileObject]) -> tuple[bool, list[FileObject]]:
+        if not files:
+            return True, []
+
+        message = (
+                "Some files failed to download.\n"
+                "Would you like to retry downloading them?\n\n"
+                + "\n".join(file.posix_path for file in files)
+        )
+        ask_event = threading.Event()
+        context = {
+            "event": ask_event,
+            "title": "Retry downloading",
+            "message": message,
+        }
+
+        self.widget_signal.askyesno.emit(context)
+
+        if not ask_event.wait(60):
+            self.widget_signal.show_error_message.emit(
+                "Timed out while waiting for confirmation. Please try again."
+            )
+            return False, files
+
+        if not context.get("result", False):
+            return False, files
+
+        # copy
+        pending = list(files)
+
+        for retry_time in range(1, MAX_DOWNLOAD_ATTEMPTS + 1):
+            if not pending:
+                return True, []
+
+            self.download_signal.log.emit(f"Attempt {retry_time}/{len(pending)}")
+
+            fails, successes = download_multiple_files(pending, progress_callback=self.download_signal.progress.emit)
+
+            for file in successes:
+                self.download_signal.log.emit(f"Downloaded {file.posix_path}.")
+
+            if fails:
+                pending = fails
+            else:
+                pending = []
+
+        if not pending:
+            return True, []
+
+        failed_list = "\n".join(file.posix_path for file in pending)
+        self.app.logger.warning(
+            "Unable to download these files:\n{}".format(failed_list)
+        )
+
+        return False, pending
