@@ -46,10 +46,20 @@ class DependencyException(LauncherException):
 class NativeResolveException(LauncherException):
     user_message = "Unable to resolve native libraries."
 
-
 class DownloadException(LauncherException):
     user_message = "Some files failed to download."
 
 class ExtractException(LauncherException):
     user_message = "Unable to extract native libraries."
 
+class AssetManifestFetchException(LauncherException):
+    user_message = "Unable to fetch asset manifest."
+
+class AssetManifestSaveException(LauncherException):
+    user_message = "Unable to save asset manifest."
+
+class AssetManifestException(LauncherException):
+    user_message = "Unable to load asset manifest."
+
+class AssetDataKeyNotFoundException(LauncherException):
+    user_message = "Specified asset data section (key) not found."
