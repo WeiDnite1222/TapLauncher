@@ -13,6 +13,8 @@ from core_lib.game.version_info import find_useful_part_in_specific_version_mani
 
 MOJANG_RESOURCE_ENDPOINT = "https://resources.download.minecraft.net/{beginning}/{hash}"
 
+ASSET_DOWNLOAD_MAX_WORKERS = 20
+
 logger = logging.getLogger("Launcher.CoreLib")
 
 def fetch_asset_manifest(target_version_manifest: dict, raw=False) -> tuple[dict | bytes, str]:
@@ -84,7 +86,7 @@ def fetch_and_save_asset_manifest(target_version_manifest: dict, destination: Pa
         with file.path.open("wb") as f:
             f.write(data)
 
-        if sha1 is not None and not file.verify_sha1(sha1):
+        if sha1 and not file.verify_sha1(sha1):
             raise HashMismatchException(
                 "sha1",
                 file.sha1,
@@ -94,6 +96,7 @@ def fetch_and_save_asset_manifest(target_version_manifest: dict, destination: Pa
 
         return json.loads(data.decode("utf-8"))
     except Exception as e:
+        logger.exception(e)
         raise AssetManifestSaveException(
             "Error saving version manifest:\n{}".format(e)
         )
@@ -164,7 +167,14 @@ def download_assets_and_copy(assets: list[FileObject], legacy_assets: list[dict]
         files: list[FileObject] (files that download failed)
     """
 
-    fails , _ = download_multiple_files(assets, progress_callback=progress_callback)
+    fails , _ = download_multiple_files(assets, progress_callback=progress_callback,
+                                        max_workers=ASSET_DOWNLOAD_MAX_WORKERS)
+
+    if fails:
+        logger.warning(
+            "Download failed for assets: \n"
+            +"\n".join([asset.posix_path for asset in fails])
+        )
 
     for asset in legacy_assets:
         target = asset.get("target")

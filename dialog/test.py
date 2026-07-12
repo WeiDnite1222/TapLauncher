@@ -2,6 +2,7 @@ import json
 import textwrap
 import threading
 import time
+import traceback
 from pathlib import Path
 
 from PySide6.QtCore import Qt, QObject, Signal, Slot
@@ -11,7 +12,9 @@ from PySide6.QtWidgets import QPushButton, QVBoxLayout, QDialog, QPlainTextEdit,
 from core_lib.common.common import download_file, FileObject, download_multiple_files
 from core_lib.common.exception import VersionNotSelectedException, UnsupportedPlatformException, \
     NativeResolveException, DownloadException, DependencyException, VersionManifestFetchException, \
-    VersionManifestSaveException, NoSpecifiedVersionKeyException
+    VersionManifestSaveException, NoSpecifiedVersionKeyException, AssetManifestFetchException, \
+    AssetManifestSaveException, AssetDataKeyNotFoundException
+from core_lib.game.asset import fetch_and_save_asset_manifest, collect_assets_from_manifest, download_assets_and_copy
 from core_lib.game.library import collect_native_artifacts, download_libraries, unzip_natives, collect_library_artifacts
 
 from core_lib.game.version_info import (find_useful_part_in_specific_version_manifest,
@@ -48,6 +51,10 @@ class TestDialog(QDialog):
         self.button_4.setObjectName("ActionButton")
         self.button_4.clicked.connect(self.load_all_version)
 
+        self.button_5 = QPushButton("Download assets")
+        self.button_5.setObjectName("ActionButton")
+        self.button_5.clicked.connect(self.download_assets)
+
         self.ver_dropdown = QComboBox()
         self.ver_dropdown.setObjectName("Dropdown")
 
@@ -70,6 +77,7 @@ class TestDialog(QDialog):
         self.right_layout.addWidget(self.button)
         self.right_layout.addWidget(self.button_2)
         self.right_layout.addWidget(self.button_3)
+        self.right_layout.addWidget(self.button_5)
         self.right_layout.addStretch()
         self.right_layout.addWidget(self.ver_type_dropdown)
         self.right_layout.addWidget(self.ver_dropdown)
@@ -131,6 +139,10 @@ class TestDialog(QDialog):
             )
         )
 
+        self.widget_signal.show_and_print_error_message.connect(
+            self.show_and_print_error
+        )
+
         self.widget_signal.show_warning_message.connect(
             lambda msg: messagebox.warning(
                 self.parent,
@@ -185,6 +197,7 @@ class TestDialog(QDialog):
         update_vers_dropdown = Signal(list)
         update_types_dropdown = Signal(list)
         show_error_message = Signal(str)
+        show_and_print_error_message = Signal(dict)
         show_warning_message = Signal(str)
         show_info_message = Signal(str)
         enable_widget = Signal(object)
@@ -226,6 +239,25 @@ class TestDialog(QDialog):
         event = context.get("event", None)
         if isinstance(event, threading.Event):
             event.set()
+
+    @Slot(dict)
+    def show_and_print_error(self, context: dict):
+        error = context.get("error", None)
+        title = context.get("title", "Error")
+        message = context.get("message", "No content")
+
+        if isinstance(error, list):
+            self.app.logger.error("".join(error))
+        elif isinstance(error, str):
+            self.app.logger.error(error)
+        elif isinstance(error, Exception):
+            self.app.logger.exception(error)
+
+        messagebox.error(
+            self.parent,
+            title,
+            message=message
+        )
 
     @staticmethod
     def get_progress(value):
@@ -326,8 +358,12 @@ class TestDialog(QDialog):
                     """)
             self.output.setPlainText(content)
         except Exception as e:
-            self.widget_signal.show_error_message.emit(
-                "Failed to run test. Details: {}".format(e)
+            self.widget_signal.show_and_print_error_message.emit(
+                {
+                    "error": traceback.format_exception(e),
+                    "title": "Test Error",
+                    "message": "Failed to run test."
+                }
             )
         finally:
             self.button.setDisabled(False)
@@ -362,7 +398,25 @@ class TestDialog(QDialog):
             return
 
         thread = threading.Thread(
-            target=self._download_libraries_process,
+            target=self._download_libraries,
+            daemon=True,
+            args=(ver,)
+        )
+        thread.start()
+
+    def download_assets(self):
+        self.button_5.setDisabled(True)
+
+        self.output.clear()
+
+        ver = self.get_selected_version()
+
+        if not ver:
+            self.widget_signal.enable_widget.emit(self.button_5)
+            return
+
+        thread = threading.Thread(
+            target=self._download_assets,
             daemon=True,
             args=(ver,)
         )
@@ -444,8 +498,12 @@ class TestDialog(QDialog):
                 "Unable to save version manifest: {}".format(e.user_message),
             )
         except Exception as e:
-            self.widget_signal.show_error_message.emit(
-                "An unexpected error occurred while caching version manifest: {}".format(e),
+            self.widget_signal.show_and_print_error_message.emit(
+                {
+                    "error": traceback.format_exception(e),
+                    "title": "Cache Error",
+                    "message": "An unexpected error occurred while caching version manifest."
+                }
             )
 
         return True if data else False, data
@@ -462,8 +520,12 @@ class TestDialog(QDialog):
             version_manifest = json.loads(path.read_text())
             return version_manifest
         except Exception as e:
-            self.widget_signal.show_error_message.emit(
-                "Unable to read version manifest:\n{}".format(e),
+            self.widget_signal.show_and_print_error_message.emit(
+                {
+                    "error": traceback.format_exception(e),
+                    "title": "Cache Error",
+                    "message": "Unable to read version manifest."
+                }
             )
             return None
 
@@ -542,13 +604,17 @@ class TestDialog(QDialog):
                 "Unable to download client while downloading it: {}".format(e.user_message),
             )
         except Exception as e:
-            self.widget_signal.show_error_message.emit(
-                "Unable to download client: {}".format(e),
+            self.widget_signal.show_and_print_error_message.emit(
+                {
+                    "error": traceback.format_exception(e),
+                    "title": "Download Error",
+                    "message": "Unable to download client, an unexpected error occurred."
+                }
             )
         finally:
             self.widget_signal.enable_widget.emit(self.button_2)
 
-    def _download_libraries_process(self, ver: str):
+    def _download_libraries(self, ver: str):
         output_dir = Path(self.app.work_dir, "libraries")
         output_dir.mkdir(parents=True, exist_ok=True)
 
@@ -610,12 +676,79 @@ class TestDialog(QDialog):
                 f"{e.user_message}"
             )
         except Exception as e:
-            self.widget_signal.show_error_message.emit(
-                "Unable to collect library artifacts. An unknown error occurred:\n"
-                f"{str(e) + f"\n{type(e)}"}"
+            self.widget_signal.show_and_print_error_message.emit(
+                {
+                    "error": traceback.format_exception(e),
+                    "title": "Download Error",
+                    "message": "Unable to collect library artifacts. An unknown error occurred."
+                }
             )
         finally:
             self.widget_signal.enable_widget.emit(self.button_3)
+
+    def _download_assets(self, ver: str):
+        try:
+            self.widget_signal.clean_output.emit()
+
+            ver_data = self.get_cached_version_manifest(ver)
+
+            if not ver_data:
+                return
+
+            _, asset_index, _, _, _, _, _ = find_useful_part_in_specific_version_manifest(ver_data)
+
+            asset_id = asset_index.get("id")
+            assets_dir = Path(self.app.work_dir, "assets")
+            index_path = Path(assets_dir, "indexes", f"{asset_id}.json")
+
+            # Download and save asset manifest
+            asset_manifest = fetch_and_save_asset_manifest(
+                ver_data,
+                index_path,
+            )
+
+            # Download assets files
+            assets, legacy_assets = collect_assets_from_manifest(
+                asset_id,
+                asset_manifest,
+                assets_dir,
+            )
+
+            fails = download_assets_and_copy(
+                assets,
+                legacy_assets,
+                progress_callback=self.download_signal.progress.emit,
+            )
+
+            if fails:
+                self.widget_signal.show_error_message.emit(
+                    "Some assets failed to download:\n"
+                    + "\n".join(file.posix_path for file in fails)
+                )
+            else:
+                self.download_signal.log.emit("All necessary assets were downloaded.")
+        except AssetManifestFetchException as e:
+            self.widget_signal.show_error_message.emit(
+                f"Unable to fetch asset manifest.\n{e.user_message}"
+            )
+        except AssetManifestSaveException as e:
+            self.widget_signal.show_error_message.emit(
+                f"Unable to save asset manifest.\n{e.user_message}"
+            )
+        except AssetDataKeyNotFoundException as e:
+            self.widget_signal.show_error_message.emit(
+                f"Unable to collect assets.\n{e.user_message}"
+            )
+        except Exception as e:
+            self.widget_signal.show_and_print_error_message.emit(
+                {
+                    "error": traceback.format_exception(e),
+                    "title": "Download Error",
+                    "message": "Unable to download assets. An unknown error occurred."
+                }
+            )
+        finally:
+            self.widget_signal.enable_widget.emit(self.button_5)
 
     def redownload_files(self, files: list[FileObject]) -> tuple[bool, list[FileObject]]:
         if not files:

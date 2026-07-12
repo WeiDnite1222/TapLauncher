@@ -413,6 +413,7 @@ def fetch_and_save_version_manifest(dest: Path, target_version: str=None, root_m
 
         return data
     except Exception as e:
+        logger.exception(e)
         raise VersionManifestSaveException(
             "Error saving version manifest:\n{}".format(e)
         )
