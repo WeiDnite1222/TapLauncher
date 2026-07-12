@@ -1,4 +1,5 @@
 import json
+import subprocess
 import textwrap
 import threading
 import time
@@ -7,15 +8,18 @@ from pathlib import Path
 
 from PySide6.QtCore import Qt, QObject, Signal, Slot
 from PySide6.QtWidgets import QPushButton, QVBoxLayout, QDialog, QPlainTextEdit, \
-    QHBoxLayout, QComboBox, QMessageBox
+    QHBoxLayout, QComboBox, QMessageBox, QInputDialog, QFileDialog
 
 from core_lib.common.common import download_file, FileObject, download_multiple_files
 from core_lib.common.exception import VersionNotSelectedException, UnsupportedPlatformException, \
     NativeResolveException, DownloadException, DependencyException, VersionManifestFetchException, \
     VersionManifestSaveException, NoSpecifiedVersionKeyException, AssetManifestFetchException, \
     AssetManifestSaveException, AssetDataKeyNotFoundException
+from core_lib.game.argument import ArgumentMappings, parse_and_generate_arguments, find_game_and_jvm_args, \
+    generate_launch_command
 from core_lib.game.asset import fetch_and_save_asset_manifest, collect_assets_from_manifest, download_assets_and_copy
-from core_lib.game.library import collect_native_artifacts, download_libraries, unzip_natives, collect_library_artifacts
+from core_lib.game.library import collect_native_artifacts, download_libraries, unzip_natives, \
+    collect_library_artifacts, generate_classpath
 
 from core_lib.game.version_info import (find_useful_part_in_specific_version_manifest,
                                         get_core_file_download_url_and_hash, \
@@ -55,6 +59,14 @@ class TestDialog(QDialog):
         self.button_5.setObjectName("ActionButton")
         self.button_5.clicked.connect(self.download_assets)
 
+        self.button_6 = QPushButton("Parse Arguments")
+        self.button_6.setObjectName("ActionButton")
+        self.button_6.clicked.connect(self.parse_argument)
+
+        self.button_7 = QPushButton("Launch Game! (Offline)")
+        self.button_7.setObjectName("ActionButton")
+        self.button_7.clicked.connect(self.launch_offline_game)
+
         self.ver_dropdown = QComboBox()
         self.ver_dropdown.setObjectName("Dropdown")
 
@@ -78,6 +90,8 @@ class TestDialog(QDialog):
         self.right_layout.addWidget(self.button_2)
         self.right_layout.addWidget(self.button_3)
         self.right_layout.addWidget(self.button_5)
+        self.right_layout.addWidget(self.button_6)
+        self.right_layout.addWidget(self.button_7)
         self.right_layout.addStretch()
         self.right_layout.addWidget(self.ver_type_dropdown)
         self.right_layout.addWidget(self.ver_dropdown)
@@ -171,6 +185,10 @@ class TestDialog(QDialog):
             self.ask_request
         )
 
+        self.widget_signal.ask_for_path.connect(
+            self.ask_for_path
+        )
+
         self.widget_signal.get_selected_ver.connect(
             self.get_selected_ver
         )
@@ -203,6 +221,7 @@ class TestDialog(QDialog):
         enable_widget = Signal(object)
         disable_widget = Signal(object)
         askyesno = Signal(dict)  # {"title", "targetEvent", "message", "result"}
+        ask_for_path = Signal(dict)
         get_selected_ver = Signal(dict)
         get_selected_type = Signal(dict)
         clean_output = Signal()
@@ -258,6 +277,27 @@ class TestDialog(QDialog):
             title,
             message=message
         )
+
+    @Slot(dict)
+    def ask_for_path(self, context: dict):
+        event = context.get("event")
+        title = context.get("title", "Select a path")
+        filter_raw = context.get("filter", "All files (*)")
+        result = context.get("result")
+
+        path, _ = QFileDialog.getOpenFileName(
+            self,
+            title,
+            "",
+            filter_raw,
+        )
+
+        if isinstance(result, dict):
+            result["ok"] = bool(path)
+            result["path"] = path
+
+        if isinstance(event, threading.Event):
+            event.set()
 
     @staticmethod
     def get_progress(value):
@@ -419,6 +459,70 @@ class TestDialog(QDialog):
             target=self._download_assets,
             daemon=True,
             args=(ver,)
+        )
+        thread.start()
+
+    def parse_argument(self):
+        self.button_6.setDisabled(True)
+
+        self.output.clear()
+
+        ver = self.get_selected_version()
+
+        if not ver:
+            self.widget_signal.enable_widget.emit(self.button_6)
+            return
+
+        thread = threading.Thread(
+            target=self._parse_argument,
+            daemon=True,
+            args=(ver,)
+        )
+        thread.start()
+
+    def launch_offline_game(self):
+        self.button_7.setDisabled(True)
+
+        self.output.clear()
+
+        ver = self.get_selected_version()
+
+        if not ver:
+            self.widget_signal.enable_widget.emit(self.button_7)
+            return
+
+        event = threading.Event()
+        result = {}
+        context = {
+            "title": "Require a java executable path to launch game.",
+            "event": event,
+            "result": result,
+            "filter": "Java executable (java.exe javaw.exe);;All files (*)"
+        }
+
+        # Ask for a support java version. If not, use system environment java
+        self.ask_for_path(
+            context,
+        )
+
+        if not event.wait(120):
+            self.widget_signal.show_error_message.emit(
+                "Timed out while waiting for Java executable selection."
+            )
+            return
+
+        java_path = result.get("path")
+
+        if java_path:
+            self.download_signal.log.emit(f"Use specified java executable path: {java_path}")
+        else:
+            self.download_signal.log.emit("Use system environment java.")
+            java_path = "java"
+
+        thread = threading.Thread(
+            target=self._launch_offline_game,
+            daemon=True,
+            args=(ver, java_path,)
         )
         thread.start()
 
@@ -750,6 +854,138 @@ class TestDialog(QDialog):
         finally:
             self.widget_signal.enable_widget.emit(self.button_5)
 
+    def _parse_argument(self, ver):
+        try:
+            ver_data = self.get_cached_version_manifest(ver)
+
+            if not ver_data:
+                return
+
+            new_args, asset_index, _, _, _, _, old_args = find_useful_part_in_specific_version_manifest(ver_data)
+
+            target_args = new_args if new_args else old_args
+
+            if not target_args:
+                self.widget_signal.show_error_message.emit(
+                    "Unable to parse arguments because data are invalid.\n"
+                )
+                return
+
+            arg_maps = ArgumentMappings()
+            game_args, jvm_args = find_game_and_jvm_args(target_args)
+            parsed_jvm_args = parse_and_generate_arguments(
+                jvm_args,
+                arg_maps
+            )
+            parsed_game_args = parse_and_generate_arguments(
+                game_args,
+                arg_maps
+            )
+            self.download_signal.log.emit(f"Parsed jvm arguments: \n{parsed_jvm_args}\n{" ".join(parsed_jvm_args)}")
+            self.download_signal.log.emit(f"Parsed game arguments: \n{parsed_game_args}\n{" ".join(parsed_game_args)}")
+        except Exception as e:
+            self.widget_signal.show_and_print_error_message.emit(
+                {
+                    "error": traceback.format_exception(e),
+                    "title": "Parse Error",
+                    "message": "Unable to parse arguments. An unknown error occurred."
+                }
+            )
+        finally:
+            self.widget_signal.enable_widget.emit(self.button_6)
+
+    def _launch_offline_game(self, ver, java_path):
+        try:
+            ver_data = self.get_cached_version_manifest(ver)
+
+            arguments, asset_index, downloads, java_version, libraries, main_class, old_args = (
+                find_useful_part_in_specific_version_manifest(ver_data)
+            )
+
+            # Vars
+            asset_id = asset_index.get("id")
+
+            # Download game files (ignore if exists)
+
+            # Client
+            self._download_client(ver)
+            self._download_libraries(ver)
+            self._download_assets(ver)
+
+            # Some paths
+            game_dir = Path(self.app.temp_dir, "minecraft")
+            game_dir.mkdir(parents=True, exist_ok=True)
+            natives_dir = Path(self.app.work_dir, "versions", ver, "natives")
+            assets_dir = Path(self.app.work_dir, "assets")
+            libraries_dir = Path(self.app.work_dir, "libraries")
+
+            classpath = generate_classpath(
+                ver_data,
+                Path(self.app.work_dir, "libraries"),
+                Path(self.app.work_dir, "versions", ver, "client.jar"),
+            )
+
+            # Mappings
+            arg_maps = ArgumentMappings(
+                player_name="Player",
+                version_name=ver,
+                game_directory=game_dir.as_posix(),
+                assets_root=assets_dir.as_posix(),
+                assets_index_name=asset_id,
+                auth_uuid="00000000000000000000000000000000",
+                auth_access_token="0",
+                user_type="legacy",
+                version_type="release",
+                natives_directory=natives_dir.as_posix(),
+                launcher_name="TestLauncher",
+                launcher_version="0.1",
+                classpath=classpath,
+                classpath_separator=";",
+                library_directory=libraries_dir.as_posix(),
+            )
+
+            target_args = arguments if arguments else old_args
+
+            if not target_args:
+                self.widget_signal.show_error_message.emit(
+                    "Unable to parse arguments because data are invalid.\n"
+                )
+                return
+
+            # Finally, generate launch command
+            cmd = generate_launch_command(
+                arg_maps=arg_maps,
+                main_class=main_class,
+                java_path=java_path,
+                full_args=target_args,
+            )
+
+            self.download_signal.log.emit(f"Launch command: {cmd}")
+
+            # run it
+            process = subprocess.Popen(
+                cmd,
+                cwd=game_dir,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.STDOUT,
+                text=True,
+                encoding="utf-8",
+                errors="replace",
+            )
+
+            for line in process.stdout:
+                self.download_signal.log.emit(line.rstrip())
+        except Exception as e:
+            self.widget_signal.show_and_print_error_message.emit(
+                {
+                    "error": traceback.format_exception(e),
+                    "title": "Launch Error",
+                    "message": "Unable to launch error. An unknown error occurred."
+                }
+            )
+        finally:
+            self.widget_signal.enable_widget.emit(self.button_7)
+
     def redownload_files(self, files: list[FileObject]) -> tuple[bool, list[FileObject]]:
         if not files:
             return True, []
@@ -805,3 +1041,5 @@ class TestDialog(QDialog):
         )
 
         return False, pending
+
+

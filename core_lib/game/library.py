@@ -13,7 +13,8 @@ from .version_info import (
     NATIVE_NEW_TO_OLD_ARCH,
     NATIVE_OLD_TO_NEW_ARCH, find_useful_part_in_specific_version_manifest,
 )
-from ..common.exception import UnsupportedPlatformException, NativeResolveException, DependencyException
+from ..common.exception import UnsupportedPlatformException, NativeResolveException, DependencyException, \
+    VersionDataKeyNotFoundException
 
 logger = logging.getLogger("Launcher.CoreLib")
 
@@ -513,3 +514,131 @@ def unzip_natives(filtered, libraries_dir, destination: Path):
         unzip(full_path, destination, exclude=exclude, flatten=flatten)
 
         logger.debug(f"Unzipped {full_path}.")
+
+
+def check_libraries_exists(manifest: dict, libraries_dir: Path):
+    """
+    Check if libraries are present in the libraries directory
+    :param manifest:
+    :param libraries_dir:
+    :return:
+        not_found: list
+    """
+    libraries = manifest.get("libraries", [])
+
+    if not libraries:
+        raise VersionDataKeyNotFoundException(
+            "Libraries not found in manifest.",
+        )
+
+    not_found = []
+
+    # Same as natives
+    _, _, os_version = get_platform_info()
+    platform_key_name, platform_rule_name, platform_arch_type = get_natives_platform_info()
+
+    for library in libraries:
+        name = library.get("name", "")
+        artifact_raw = library.get("downloads", {}).get("artifact", {})
+        rules = library.get("rules", [])
+        classifiers = library.get("downloads", {}).get("classifiers", {})
+        natives = library.get("natives", {})
+
+        # Ignore natives
+        if (len(natives) > 0 or bool(re.search(r":natives-[^:]+$", name)) or
+                any(native.startswith("natives-") for native in classifiers)):
+            logger.info(f"Skipping {name} because its a native library.")
+            continue
+
+        if not is_library_allowed(
+                rules,
+                platform_rule_name,
+                platform_arch_type,
+                os_version,
+        ):
+            continue
+
+        artifact = generate_formatted_artifact_with_name(
+            name,
+            artifact_raw
+        )
+
+        if not artifact:
+            logger.warning(f"Artifact {name} are not valid. Skipping...")
+            continue
+
+        relative_path = artifact.get("path")
+        full_path = libraries_dir / Path(relative_path)
+
+        if not full_path.is_file() or not full_path.exists():
+            logger.debug(f"Artifact {name} missing.")
+            not_found.append(full_path)
+
+    return not_found
+
+def generate_classpath(manifest: dict, libraries_dir: Path, core_file_path: Path):
+    """
+    Generate classpath by using specific version's data
+    :param manifest:
+    :param libraries_dir:
+    :param core_file_path:
+    :return:
+        not_found: list
+    """
+    libraries = manifest.get("libraries", [])
+
+    if not libraries:
+        raise VersionDataKeyNotFoundException(
+            "Libraries not found in manifest.",
+        )
+
+    # Same as natives
+    _, _, os_version = get_platform_info()
+    platform_key_name, platform_rule_name, platform_arch_type = get_natives_platform_info()
+
+    separator = ";" if platform_key_name == "windows" else ":"
+    classes = []
+
+    for library in libraries:
+        name = library.get("name", "")
+        artifact_raw = library.get("downloads", {}).get("artifact", {})
+        rules = library.get("rules", [])
+        classifiers = library.get("downloads", {}).get("classifiers", {})
+        natives = library.get("natives", {})
+
+        # Ignore natives
+        if (len(natives) > 0 or bool(re.search(r":natives-[^:]+$", name)) or
+                any(native.startswith("natives-") for native in classifiers)):
+            logger.info(f"Skipping {name} because its a native library.")
+            continue
+
+        if not is_library_allowed(
+                rules,
+                platform_rule_name,
+                platform_arch_type,
+                os_version,
+        ):
+            continue
+
+        artifact = generate_formatted_artifact_with_name(
+            name,
+            artifact_raw
+        )
+
+        if not artifact:
+            logger.warning(f"Artifact {name} are not valid. Skipping...")
+            continue
+
+        relative_path = artifact.get("path")
+        full_path = libraries_dir / Path(relative_path)
+
+        if not full_path.is_file() or not full_path.exists():
+            raise FileNotFoundError(f"Artifact {name} missing.")
+
+        classes.append(full_path.as_posix())
+
+    # Append core file
+    classes.append(core_file_path.as_posix())
+
+    return f"{separator}".join(classes)
+
