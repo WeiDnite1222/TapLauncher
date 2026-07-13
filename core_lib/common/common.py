@@ -19,12 +19,13 @@ THREADED_DOWNLOAD_MAX_WORKERS = 10
 logger = logging.getLogger("Launcher.CoreLib")
 
 class FileObject:
-    def __init__(self, path: Path, url=None, sha1=None, sha256=None, md5=None):
+    def __init__(self, path: Path, url=None, sha1=None, sha256=None, md5=None, size=None):
         self.__path = path
 
         self.expected_sha1 = sha1
         self.expected_sha256 = sha256
         self.expected_md5 = md5
+        self.expected_size = size
 
         self.__sha1 = None
         self.__sha256 = None
@@ -98,7 +99,13 @@ class FileObject:
         if algorithm == "md5":
             return self.verify_md5(expected_hash if expected_hash else self.expected_md5)
 
+        if algorithm == "size":
+            return self.verify_size(expected_hash if expected_hash else self.expected_size)
+
         raise Exception("Unsupported algorithm: {}".format(algorithm))
+
+    def verify_size(self, expected_size):
+        return self.size == expected_size if expected_size else self.expected_size == self.size
 
     def _calculate_hash(self, algorithm):
         h = hashlib.new(algorithm)
@@ -262,6 +269,7 @@ def unzip(filepath: Path, destination: Path, exclude: list[str] | None = None, f
 def get_platform_info():
     """
     Get information about the current platform.
+    IMPORTANT: All return values are lower-case
     :return:
         platform_name: str, architecture: str, os_version: str
     """

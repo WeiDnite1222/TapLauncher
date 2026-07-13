@@ -1,4 +1,6 @@
-from PySide6.QtWidgets import QMessageBox, QMainWindow, QWidget
+from PySide6.QtWidgets import QMessageBox, QMainWindow, QWidget, QDialog, QVBoxLayout, QLabel, QPlainTextEdit, \
+    QDialogButtonBox, QSizePolicy
+
 
 def create_messagebox(parent: QWidget, title: str, message: str,
                       icon: QMessageBox.Icon = QMessageBox.Icon.Information,
@@ -42,3 +44,33 @@ def warning(parent: QWidget, title: str, message: str,
         icon=QMessageBox.Icon.Warning,
         button=button
     ).exec()
+
+
+def ask_yes_no_with_plain_text(parent: QWidget, title: str, message: str, content: str):
+    dialog = QDialog(parent)
+    dialog.setWindowTitle(title)
+    dialog.resize(720, 420)
+
+    layout = QVBoxLayout(dialog)
+
+    label = QLabel(message)
+    label.setWordWrap(True)
+    label.setWordWrap(True)
+
+    details_box = QPlainTextEdit()
+    details_box.setReadOnly(True)
+    details_box.setPlainText(content)
+    details_box.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Expanding)
+
+    buttons = QDialogButtonBox(
+        QDialogButtonBox.StandardButton.Yes |
+        QDialogButtonBox.StandardButton.No
+    )
+    buttons.button(QDialogButtonBox.StandardButton.Yes).clicked.connect(dialog.accept)
+    buttons.button(QDialogButtonBox.StandardButton.No).clicked.connect(dialog.reject)
+
+    layout.addWidget(label)
+    layout.addWidget(details_box, 1)
+    layout.addWidget(buttons)
+
+    return dialog.exec() == QDialog.DialogCode.Accepted

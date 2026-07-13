@@ -14,7 +14,7 @@ from .version_info import (
     NATIVE_OLD_TO_NEW_ARCH, find_useful_part_in_specific_version_manifest,
 )
 from ..common.exception import UnsupportedPlatformException, NativeResolveException, DependencyException, \
-    VersionDataKeyNotFoundException
+    VersionDataKeyNotFoundException, DownloadException
 
 logger = logging.getLogger("Launcher.CoreLib")
 
@@ -439,7 +439,8 @@ def collect_native_artifacts(specific_version_manifest):
 
     return items
 
-def download_libraries(artifacts, output_dir, progress_callback: Callable[[str], None]):
+def download_libraries(artifacts, output_dir, progress_callback: Callable[[str, float], None]=None) \
+        -> tuple[list[FileObject], list[FileObject]]:
     """
     Download libraries from a list that contains artifacts
     :param artifacts:
@@ -450,6 +451,7 @@ def download_libraries(artifacts, output_dir, progress_callback: Callable[[str],
         successes: list (artifacts that were downloaded)
     """
     files = []
+    successes = []
 
     for artifact in artifacts:
         sha1 = artifact.get("sha1")
@@ -475,14 +477,15 @@ def download_libraries(artifacts, output_dir, progress_callback: Callable[[str],
 
         if file.exists and (sha1 is None or file.verify("sha1", sha1)):
             logger.debug(f"File {full_path} exists.")
+            successes.append(file)
             continue
 
         files.append(file)
 
-    fails, successes = download_multiple_files(files, progress_callback=progress_callback)
+    fails, finished = download_multiple_files(files, progress_callback=progress_callback)
+    successes.extend(finished)
 
     return fails, successes
-
 
 def unzip_natives(filtered, libraries_dir, destination: Path):
     """
@@ -641,4 +644,44 @@ def generate_classpath(manifest: dict, libraries_dir: Path, core_file_path: Path
     classes.append(core_file_path.as_posix())
 
     return f"{separator}".join(classes)
+
+def download_full_libraries(manifest: dict, libraries_dir: Path, natives_dir: Path,
+                            progress_callback:  Callable[[str, float], None]=None,
+                            redownload_callback: Callable[[list[FileObject]], tuple[bool, list[FileObject]]]=None) -> None:
+    # libraries
+    libraries = collect_library_artifacts(manifest)
+
+    # natives
+    natives = collect_native_artifacts(manifest)
+
+    # all
+    full = list(libraries)
+    full.extend(natives)
+
+    logger.info(
+        "Supported native count: {}".format(len(natives))
+    )
+
+    # Start download
+    fails, successes = download_libraries(full, libraries_dir, progress_callback=progress_callback)
+
+    download_ok = len(fails) == 0
+
+    if redownload_callback and not download_ok:
+        download_ok, fails = redownload_callback(fails)
+
+        if not download_ok:
+            raise DownloadException(
+                "Unable to continue process due to certain libraries download failed:\n"
+                + "\n".join(file.posix_path for file in fails)
+            )
+
+    if download_ok:
+        # Start unzip natives
+        unzip_natives(natives, libraries_dir, natives_dir)
+    else:
+        raise DependencyException(
+            "Certain libraries download failed. Unable to continue unzip process.\n"
+        )
+
 

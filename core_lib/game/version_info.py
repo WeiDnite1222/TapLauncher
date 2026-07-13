@@ -1,11 +1,13 @@
 import json
 import logging
+import re
 import warnings
+from collections.abc import Callable
 from pathlib import Path
 
 import requests
 
-from ..common.common import FileObject
+from ..common.common import FileObject, download_file
 from ..common.exception import VersionManifestFetchException, NoVersionFoundException, \
     NoSpecifiedVersionKeyException, VersionDataKeyNotFoundException, VersionManifestSaveException, HashMismatchException
 
@@ -61,6 +63,43 @@ NATIVE_NEW_TO_OLD_ARCH = {
     "x86_64": "64",
 }
 
+RUNTIME_PLATFORM_MAP = {
+    "linux": "linux",
+    "darwin": "mac-os",
+    "macos": "mac-os",
+    "osx": "mac-os",
+    "windows": "windows",
+    "win32": "windows",
+    "cygwin": "windows",
+    "msys": "windows",
+}
+
+RUNTIME_ARCH_EMPTY = "$EMPTY"
+
+RUNTIME_ARCH_MAP = {
+    "linux": {
+        "i386": "i386",
+        "i686": "i386",
+        "x86": "i386",
+        "amd64": RUNTIME_ARCH_EMPTY,
+        "x86_64": RUNTIME_ARCH_EMPTY,
+    },
+    "windows": {
+        "i386": "x86",
+        "i686": "x86",
+        "x86": "x86",
+        "amd64": "x64",
+        "x86_64": "x64",
+        "aarch64": "arm64",
+        "arm64": "arm64",
+    },
+    "mac-os": {
+        "amd64": RUNTIME_ARCH_EMPTY,
+        "x86_64": RUNTIME_ARCH_EMPTY,
+        "aarch64": "arm64",
+        "arm64": "arm64",
+    },
+}
 
 logger = logging.getLogger("Launcher.CoreLib")
 
@@ -227,7 +266,7 @@ def get_specific_version_manifest_url_and_hash(version_manifest: dict, version_i
     for version in versions:
         if version.get("id") == version_id:
             specific_ver_manifest_url = version.get("url", None)
-            specific_ver_manifest_hash = version.get("hash", None)
+            specific_ver_manifest_hash = version.get("sha1", None)
 
             if specific_ver_manifest_url is None:
                 raise VersionManifestFetchException(
@@ -244,13 +283,13 @@ def get_specific_version_manifest_url_and_hash(version_manifest: dict, version_i
     )
 
 
-def fetch_specific_version_manifest(version_manifest: dict, spec_version: str) -> tuple[dict, str | None]:
+def fetch_specific_version_manifest(version_manifest: dict, spec_version: str) -> tuple[bytes, str | None]:
     """
     Get specific version's manifest data and hash from version manifest.
     :param version_manifest:
     :param spec_version:
     :return:
-        specific_version_manifest_data: str
+        specific_version_manifest_data: bytes
         hash: str (sha1)
     """
     ver_url, sha1 = get_specific_version_manifest_url_and_hash(version_manifest, spec_version)
@@ -263,14 +302,7 @@ def fetch_specific_version_manifest(version_manifest: dict, spec_version: str) -
             "Failed to fetch version manifest URL: {}\n{}".format(ver_url, e)
         )
 
-    try:
-        data = r.json()
-        logger.debug("SpecificVersionManifest: {}".format(json.dumps(data, indent=4)))
-        return data, sha1
-    except ValueError as e:
-        raise VersionManifestFetchException(
-            "Unable to deserialize response data into dictionary: {} (TargetVer: {})".format(e, ver_url)
-        )
+    return r.content, sha1
 
 # mapping
 get_specific_version_manifest = fetch_specific_version_manifest
@@ -400,8 +432,12 @@ def fetch_and_save_version_manifest(dest: Path, target_version: str=None, root_m
     dest.parent.mkdir(parents=True, exist_ok=True)
 
     try:
-        with dest.open("w") as f:
-            json.dump(data, f, indent=4)
+        method = "wb" if isinstance(data, bytes) else "w"
+        with dest.open(method) as f:
+            if isinstance(data, bytes):
+                f.write(data)
+            elif isinstance(data, dict):
+                json.dump(data, f)
 
         if sha1 is not None and not file.verify_sha1(sha1):
             raise HashMismatchException(
@@ -411,9 +447,48 @@ def fetch_and_save_version_manifest(dest: Path, target_version: str=None, root_m
                 file.posix_path
             )
 
-        return data
+        if isinstance(data, bytes):
+            # Convert the data back to dict
+            return json.loads(data.decode("utf-8"))
+        else:
+            return data
     except Exception as e:
         logger.exception(e)
         raise VersionManifestSaveException(
             "Error saving version manifest:\n{}".format(e)
         )
+
+def download_core_file(manifest: dict, destination: Path, is_server=False, raise_for_null_hash=False,
+                       progress_callback: Callable[str]=None) -> FileObject:
+    """
+    Download core file from version manifest.
+    :param manifest:
+    :param destination:
+    :param is_server:
+    :param raise_for_null_hash:
+    :param progress_callback:
+    :return:
+        client_file: FileObject
+    """
+    url, sha1 = get_core_file_download_url_and_hash(manifest, is_server=is_server)
+
+    destination.parent.mkdir(parents=True, exist_ok=True)
+    file = FileObject(destination, url=url)
+
+    if sha1 is None and raise_for_null_hash:
+        raise VersionDataKeyNotFoundException(
+            "Core file hash is missing. Enable \"raise_for_null_hash\" flag to ignore this exception.\n"
+        )
+    elif sha1 is None:
+        logger.warning("Client has no sha1.")
+
+    if file.exists and file.verify("sha1", sha1):
+        logger.info(f"Client existed and sha1 matches.")
+    elif url is not None:
+        download_file(file, progress_callback=progress_callback)
+    elif not url:
+        raise VersionDataKeyNotFoundException(
+            "Core file url is None. Unable to download it."
+        )
+
+    return file

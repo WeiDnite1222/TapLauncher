@@ -1,4 +1,5 @@
 import json
+import queue
 import subprocess
 import textwrap
 import threading
@@ -14,21 +15,44 @@ from core_lib.common.common import download_file, FileObject, download_multiple_
 from core_lib.common.exception import VersionNotSelectedException, UnsupportedPlatformException, \
     NativeResolveException, DownloadException, DependencyException, VersionManifestFetchException, \
     VersionManifestSaveException, NoSpecifiedVersionKeyException, AssetManifestFetchException, \
-    AssetManifestSaveException, AssetDataKeyNotFoundException
+    AssetManifestSaveException, AssetDataKeyNotFoundException, VersionDataKeyNotFoundException
 from core_lib.game.argument import ArgumentMappings, parse_and_generate_arguments, find_game_and_jvm_args, \
     generate_launch_command
-from core_lib.game.asset import fetch_and_save_asset_manifest, collect_assets_from_manifest, download_assets_and_copy
-from core_lib.game.library import collect_native_artifacts, download_libraries, unzip_natives, \
-    collect_library_artifacts, generate_classpath
+from core_lib.game.asset import download_assets
+from core_lib.game.library import generate_classpath, download_full_libraries
 
 from core_lib.game.version_info import (find_useful_part_in_specific_version_manifest,
                                         get_core_file_download_url_and_hash, \
                                         get_all_versions, get_available_version_types, \
-                                        fetch_and_save_version_manifest, get_specific_version_manifest_url_and_hash)
+                                        fetch_and_save_version_manifest, get_specific_version_manifest_url_and_hash,
+                                        download_core_file)
 from core_lib.qt import messagebox
 from core_lib.qt.hack import is_main_thread
+from core_lib.qt.messagebox import ask_yes_no_with_plain_text
 
 MAX_DOWNLOAD_ATTEMPTS = 3
+
+
+class YesNoRequest:
+    def __init__(self, title, message):
+        self.title = title
+        self.message = message
+        self.result_queue = queue.Queue(maxsize=1)
+        self.wait_event = threading.Event()
+
+        self.details = None # Set this if flag use_plain_text is enabled
+
+        # flags
+        self.use_plain_text = True
+
+    def wait(self, timeout: int | None = 10):
+        return self.wait_event.wait(timeout)
+
+    def result(self):
+        try:
+            return self.result_queue.get_nowait()
+        except queue.Empty:
+            return None
 
 
 class TestDialog(QDialog):
@@ -220,30 +244,37 @@ class TestDialog(QDialog):
         show_info_message = Signal(str)
         enable_widget = Signal(object)
         disable_widget = Signal(object)
-        askyesno = Signal(dict)  # {"title", "targetEvent", "message", "result"}
+        askyesno = Signal(object)
         ask_for_path = Signal(dict)
         get_selected_ver = Signal(dict)
         get_selected_type = Signal(dict)
         clean_output = Signal()
 
-    @Slot(dict)
-    def ask_request(self, context: dict):
-        title = context.get("title", "Info")
-        message = context.get("message", "No content")
-        event = context.get("event", None)
-        msg = QMessageBox.question(
-            self,
-            title,
-            message,
-            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
-            QMessageBox.StandardButton.Yes,
-        )
+    @Slot(object)
+    def ask_request(self, context: YesNoRequest):
+        if not context.use_plain_text:
+            msg = QMessageBox.question(
+                self,
+                context.title,
+                context.message,
+                QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+                QMessageBox.StandardButton.Yes,
+            )
+            result = msg == QMessageBox.StandardButton.Yes
+        else:
+            result = ask_yes_no_with_plain_text(
+                self,
+                context.title,
+                context.message,
+                context.details,
+            )
 
-        if msg == QMessageBox.StandardButton.Yes and type(event) == threading.Event:
-            context["result"] = True
+        if result:
+            context.result_queue.put(True)
+        else:
+            context.result_queue.put(False)
 
-        if isinstance(event, threading.Event):
-            event.set()
+        context.wait_event.set()
 
     @Slot(dict)
     def get_selected_ver(self, context: dict):
@@ -595,11 +626,11 @@ class TestDialog(QDialog):
             data = fetch_and_save_version_manifest(path, target_version=specified_ver, root_manifest=root_manifest)
         except VersionManifestFetchException as e:
             self.widget_signal.show_error_message.emit(
-                "Unable to fetch version manifest: {}".format(e.user_message),
+                e.user_message,
             )
         except VersionManifestSaveException as e:
             self.widget_signal.show_error_message.emit(
-                "Unable to save version manifest: {}".format(e.user_message),
+                e.user_message,
             )
         except Exception as e:
             self.widget_signal.show_and_print_error_message.emit(
@@ -665,7 +696,7 @@ class TestDialog(QDialog):
                 self.app.logger.warning("Specified version '{}' hash doesn't exist.".format(specified_ver))
 
             # Also check sha1
-            if specified_ver and age < max_age and (sha1 is None or file.verify("sha1", sha1)):
+            if specified_ver and age < max_age and file.verify("sha1", sha1):
                 return self._read_cached_version_manifest(specified_ver)
 
         result, data = self._cache_version_manifest(specified_ver, root_manifest=root_manifest)
@@ -686,26 +717,21 @@ class TestDialog(QDialog):
             if not ver_data:
                 return
 
-            url, sha1 = get_core_file_download_url_and_hash(ver_data)
-
-            dest = Path(self.app.work_dir, "versions", ver, "client.jar")
-
-            file = FileObject(dest, url=url)
-
-            if sha1 is None:
-                self.app.logger.warning("Client has no sha1.")
-
-            if file.exists and file.verify("sha1", sha1):
-                self.download_signal.log.emit(f"Client existed and sha1 matches.")
-            elif url is not None:
-                download_file(file, progress_callback=self.download_signal.progress.emit)
-            elif not url:
-                self.download_signal.failed.emit("Download URL not found.")
-
-            self.download_signal.log.emit(f"Downloaded URL: {url}")
+            client_dest = Path(self.app.work_dir, "versions", ver, f"{ver}.jar")
+            download_core_file(ver_data, client_dest, progress_callback=self.download_signal.progress.emit,
+                               raise_for_null_hash=True)
+            self.download_signal.log.emit(f"Downloaded {ver} client to {client_dest}")
         except DownloadException as e:
             self.widget_signal.show_error_message.emit(
                 "Unable to download client while downloading it: {}".format(e.user_message),
+            )
+        except VersionDataKeyNotFoundException as e:
+            self.widget_signal.show_and_print_error_message.emit(
+                {
+                    "error": traceback.format_exception(e),
+                    "title": "Fetch Error",
+                    "message": "Unable to download client due to some necessary key is missing.",
+                }
             )
         except Exception as e:
             self.widget_signal.show_and_print_error_message.emit(
@@ -719,9 +745,6 @@ class TestDialog(QDialog):
             self.widget_signal.enable_widget.emit(self.button_2)
 
     def _download_libraries(self, ver: str):
-        output_dir = Path(self.app.work_dir, "libraries")
-        output_dir.mkdir(parents=True, exist_ok=True)
-
         try:
             self.widget_signal.clean_output.emit()
 
@@ -730,35 +753,21 @@ class TestDialog(QDialog):
             if not ver_data:
                 return
 
-            # libraries
-            libraries = collect_library_artifacts(ver_data)
+            libraries_dir = Path(self.app.work_dir, "libraries")
+            natives_dest = Path(self.app.work_dir, "versions", ver, "natives")
+            libraries_dir.mkdir(parents=True, exist_ok=True)
+            natives_dest.mkdir(parents=True, exist_ok=True)
 
-            # natives
-            natives = collect_native_artifacts(ver_data)
-
-            # all
-            full = list(libraries)
-            full.extend(natives)
-
-            self.download_signal.log.emit(
-                "Supported native count: {}".format(len(natives))
+            download_full_libraries(
+                ver_data,
+                libraries_dir,
+                natives_dest,
+                progress_callback=self.download_signal.progress.emit,
+                redownload_callback=self.redownload_files
             )
-
-            # Start download
-            fails, successes = download_libraries(full, output_dir,
-                                                  progress_callback=self.download_signal.progress.emit)
-
-            download_ok, fails = self.redownload_files(fails)
-
-            if not download_ok:
-                self.widget_signal.show_error_message.emit(
-                    "Unable to continue process due to certain libraries download failed:\n"
-                    + "\n".join(file.posix_path for file in fails)
-                )
-            else:
-                # Start unzip natives
-                natives_dest = Path(self.app.work_dir, "versions", ver, "natives")
-                unzip_natives(natives, output_dir, natives_dest)
+            self.download_signal.log.emit(
+                "All libraries downloaded successfully."
+            )
         except DependencyException as e:
             self.widget_signal.show_error_message.emit(
                 "Unable to collect library artifacts.\n"
@@ -799,38 +808,19 @@ class TestDialog(QDialog):
             if not ver_data:
                 return
 
-            _, asset_index, _, _, _, _, _ = find_useful_part_in_specific_version_manifest(ver_data)
-
-            asset_id = asset_index.get("id")
             assets_dir = Path(self.app.work_dir, "assets")
-            index_path = Path(assets_dir, "indexes", f"{asset_id}.json")
 
-            # Download and save asset manifest
-            asset_manifest = fetch_and_save_asset_manifest(
-                ver_data,
-                index_path,
-            )
-
-            # Download assets files
-            assets, legacy_assets = collect_assets_from_manifest(
-                asset_id,
-                asset_manifest,
-                assets_dir,
-            )
-
-            fails = download_assets_and_copy(
-                assets,
-                legacy_assets,
-                progress_callback=self.download_signal.progress.emit,
-            )
+            fails = download_assets(ver_data, assets_dir, no_hash_check=True)
 
             if fails:
-                self.widget_signal.show_error_message.emit(
-                    "Some assets failed to download:\n"
-                    + "\n".join(file.posix_path for file in fails)
+                self.widget_signal.show_warning_message.emit(
+                    "Some assets were not downloaded. Although is not necessary for launching game."
+                    " But it may cause some texture issue when you playing. (Such as missing textures)"
                 )
             else:
-                self.download_signal.log.emit("All necessary assets were downloaded.")
+                self.download_signal.log.emit(
+                    "All assets downloaded successfully."
+                )
         except AssetManifestFetchException as e:
             self.widget_signal.show_error_message.emit(
                 f"Unable to fetch asset manifest.\n{e.user_message}"
@@ -895,8 +885,21 @@ class TestDialog(QDialog):
             self.widget_signal.enable_widget.emit(self.button_6)
 
     def _launch_offline_game(self, ver, java_path):
+        """
+        Launch offline game
+        :param ver:
+        :param java_path:
+        :return:
+        """
         try:
+            current_status = 0 # 0 = fetch version manifest, 1 = check client, 2 = check libraries
+            # 3 = check libraries, 4 = check assets
+
+            # Version manifest
             ver_data = self.get_cached_version_manifest(ver)
+
+            if not ver_data:
+                return
 
             arguments, asset_index, downloads, java_version, libraries, main_class, old_args = (
                 find_useful_part_in_specific_version_manifest(ver_data)
@@ -905,24 +908,65 @@ class TestDialog(QDialog):
             # Vars
             asset_id = asset_index.get("id")
 
-            # Download game files (ignore if exists)
-
-            # Client
-            self._download_client(ver)
-            self._download_libraries(ver)
-            self._download_assets(ver)
-
             # Some paths
+            core_file_path = Path(self.app.work_dir, "versions", ver, f"{ver}.jar")
             game_dir = Path(self.app.temp_dir, "minecraft")
             game_dir.mkdir(parents=True, exist_ok=True)
             natives_dir = Path(self.app.work_dir, "versions", ver, "natives")
             assets_dir = Path(self.app.work_dir, "assets")
             libraries_dir = Path(self.app.work_dir, "libraries")
 
+            # Check client
+            self._download_client(ver)
+
+            if not core_file_path.exists():
+                url, sha1 = get_core_file_download_url_and_hash(ver_data)
+
+            try:
+                ver_data = self.get_cached_version_manifest(ver)
+
+                if not ver_data:
+                    return
+
+                url, sha1 = get_core_file_download_url_and_hash(ver_data)
+
+                dest = Path(self.app.work_dir, "versions", ver, f"{ver}.jar")
+
+                file = FileObject(dest, url=url)
+
+                if sha1 is None:
+                    self.app.logger.warning("Client has no sha1.")
+
+                if file.exists and file.verify("sha1", sha1):
+                    self.download_signal.log.emit(f"Client existed and sha1 matches.")
+                elif url is not None:
+                    download_file(file, progress_callback=self.download_signal.progress.emit)
+                elif not url:
+                    self.download_signal.failed.emit("Download URL not found.")
+
+                self.download_signal.log.emit(f"Downloaded URL: {url}")
+            except DownloadException as e:
+                self.widget_signal.show_error_message.emit(
+                    "Unable to download client while downloading it: {}".format(e.user_message),
+                )
+            except Exception as e:
+                self.widget_signal.show_and_print_error_message.emit(
+                    {
+                        "error": traceback.format_exception(e),
+                        "title": "Download Error",
+                        "message": "Unable to download client, an unexpected error occurred."
+                    }
+                )
+            finally:
+                self.widget_signal.enable_widget.emit(self.button_2)
+
+            self._download_libraries(ver)
+            self._download_assets(ver)
+
             classpath = generate_classpath(
                 ver_data,
-                Path(self.app.work_dir, "libraries"),
-                Path(self.app.work_dir, "versions", ver, "client.jar"),
+                libraries_dir,
+                core_file_path,
             )
 
             # Mappings
@@ -993,24 +1037,22 @@ class TestDialog(QDialog):
         message = (
                 "Some files failed to download.\n"
                 "Would you like to retry downloading them?\n\n"
-                + "\n".join(file.posix_path for file in files)
         )
-        ask_event = threading.Event()
-        context = {
-            "event": ask_event,
-            "title": "Retry downloading",
-            "message": message,
-        }
 
-        self.widget_signal.askyesno.emit(context)
+        request = YesNoRequest("Redownload", message)
+        request.details = "\n".join(file.posix_path for file in files)
 
-        if not ask_event.wait(60):
+        self.widget_signal.askyesno.emit(request)
+
+        if not request.wait(60):
             self.widget_signal.show_error_message.emit(
                 "Timed out while waiting for confirmation. Please try again."
             )
             return False, files
 
-        if not context.get("result", False):
+        result = request.result()
+
+        if not result:
             return False, files
 
         # copy

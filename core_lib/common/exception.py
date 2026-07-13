@@ -63,3 +63,15 @@ class AssetManifestException(LauncherException):
 
 class AssetDataKeyNotFoundException(LauncherException):
     user_message = "Specified asset data section (key) not found."
+
+class JavaRuntimeException(LauncherException):
+    user_message = "An error occurred while executing Java runtime."
+
+class JavaRuntimeParseException(JavaRuntimeException):
+    user_message = "Unable to parse Java runtime details."
+
+class RuntimeManifestFetchException(LauncherException):
+    user_message = "Unable to fetch runtime manifest."
+
+class RuntimeManifestDataException(LauncherException):
+    user_message = "Runtime manifest is missing or corrupted."
