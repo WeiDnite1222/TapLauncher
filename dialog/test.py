@@ -9,17 +9,18 @@ from pathlib import Path
 
 from PySide6.QtCore import Qt, QObject, Signal, Slot
 from PySide6.QtWidgets import QPushButton, QVBoxLayout, QDialog, QPlainTextEdit, \
-    QHBoxLayout, QComboBox, QMessageBox, QInputDialog, QFileDialog
+    QHBoxLayout, QComboBox, QMessageBox, QFileDialog
 
-from core_lib.common.common import download_file, FileObject, download_multiple_files
+from core_lib.common.common import FileObject, download_multiple_files
 from core_lib.common.exception import VersionNotSelectedException, UnsupportedPlatformException, \
     NativeResolveException, DownloadException, DependencyException, VersionManifestFetchException, \
     VersionManifestSaveException, NoSpecifiedVersionKeyException, AssetManifestFetchException, \
     AssetManifestSaveException, AssetDataKeyNotFoundException, VersionDataKeyNotFoundException
 from core_lib.game.argument import ArgumentMappings, parse_and_generate_arguments, find_game_and_jvm_args, \
     generate_launch_command
-from core_lib.game.asset import download_assets
-from core_lib.game.library import generate_classpath, download_full_libraries
+from core_lib.game.asset import download_assets, check_assets_exist, find_correct_assets_dir
+from core_lib.game.library import generate_classpath, download_full_libraries, check_libraries_exists, \
+    check_full_libraries_exists
 
 from core_lib.game.version_info import (find_useful_part_in_specific_version_manifest,
                                         get_core_file_download_url_and_hash, \
@@ -29,11 +30,12 @@ from core_lib.game.version_info import (find_useful_part_in_specific_version_man
 from core_lib.qt import messagebox
 from core_lib.qt.hack import is_main_thread
 from core_lib.qt.messagebox import ask_yes_no_with_plain_text
+from core_lib.runtime.java import find_java_installations
 
 MAX_DOWNLOAD_ATTEMPTS = 3
 
 
-class YesNoRequest:
+class AskForRequest:
     def __init__(self, title, message):
         self.title = title
         self.message = message
@@ -53,6 +55,11 @@ class YesNoRequest:
             return self.result_queue.get_nowait()
         except queue.Empty:
             return None
+
+class SelectPathRequest(AskForRequest):
+    def __init__(self, title, message, filter_raw=None):
+        super().__init__(title, message)
+        self.filter = filter_raw
 
 
 class TestDialog(QDialog):
@@ -245,13 +252,13 @@ class TestDialog(QDialog):
         enable_widget = Signal(object)
         disable_widget = Signal(object)
         askyesno = Signal(object)
-        ask_for_path = Signal(dict)
+        ask_for_path = Signal(object)
         get_selected_ver = Signal(dict)
         get_selected_type = Signal(dict)
         clean_output = Signal()
 
     @Slot(object)
-    def ask_request(self, context: YesNoRequest):
+    def ask_request(self, context: AskForRequest):
         if not context.use_plain_text:
             msg = QMessageBox.question(
                 self,
@@ -273,6 +280,45 @@ class TestDialog(QDialog):
             context.result_queue.put(True)
         else:
             context.result_queue.put(False)
+
+        context.wait_event.set()
+
+    @Slot(object)
+    def ask_request(self, context: AskForRequest):
+        if not context.use_plain_text:
+            msg = QMessageBox.question(
+                self,
+                context.title,
+                context.message,
+                QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+                QMessageBox.StandardButton.Yes,
+            )
+            result = msg == QMessageBox.StandardButton.Yes
+        else:
+            result = ask_yes_no_with_plain_text(
+                self,
+                context.title,
+                context.message,
+                context.details,
+            )
+
+        if result:
+            context.result_queue.put(True)
+        else:
+            context.result_queue.put(False)
+
+        context.wait_event.set()
+
+    @Slot(object)
+    def ask_for_path(self, context: SelectPathRequest):
+        path, _ = QFileDialog.getOpenFileName(
+            self,
+            context.title,
+            "",
+            context.filter,
+        )
+
+        context.result_queue.put(path)
 
         context.wait_event.set()
 
@@ -308,27 +354,6 @@ class TestDialog(QDialog):
             title,
             message=message
         )
-
-    @Slot(dict)
-    def ask_for_path(self, context: dict):
-        event = context.get("event")
-        title = context.get("title", "Select a path")
-        filter_raw = context.get("filter", "All files (*)")
-        result = context.get("result")
-
-        path, _ = QFileDialog.getOpenFileName(
-            self,
-            title,
-            "",
-            filter_raw,
-        )
-
-        if isinstance(result, dict):
-            result["ok"] = bool(path)
-            result["path"] = path
-
-        if isinstance(event, threading.Event):
-            event.set()
 
     @staticmethod
     def get_progress(value):
@@ -522,38 +547,10 @@ class TestDialog(QDialog):
             self.widget_signal.enable_widget.emit(self.button_7)
             return
 
-        event = threading.Event()
-        result = {}
-        context = {
-            "title": "Require a java executable path to launch game.",
-            "event": event,
-            "result": result,
-            "filter": "Java executable (java.exe javaw.exe);;All files (*)"
-        }
-
-        # Ask for a support java version. If not, use system environment java
-        self.ask_for_path(
-            context,
-        )
-
-        if not event.wait(120):
-            self.widget_signal.show_error_message.emit(
-                "Timed out while waiting for Java executable selection."
-            )
-            return
-
-        java_path = result.get("path")
-
-        if java_path:
-            self.download_signal.log.emit(f"Use specified java executable path: {java_path}")
-        else:
-            self.download_signal.log.emit("Use system environment java.")
-            java_path = "java"
-
         thread = threading.Thread(
             target=self._launch_offline_game,
             daemon=True,
-            args=(ver, java_path,)
+            args=(ver,)
         )
         thread.start()
 
@@ -810,7 +807,10 @@ class TestDialog(QDialog):
 
             assets_dir = Path(self.app.work_dir, "assets")
 
-            fails = download_assets(ver_data, assets_dir, no_hash_check=True)
+            fails = download_assets(ver_data, assets_dir,
+                                    no_hash_check=True,
+                                    progress_callback=self.download_signal.progress.emit,
+                                    launcher_root=self.app.work_dir)
 
             if fails:
                 self.widget_signal.show_warning_message.emit(
@@ -884,16 +884,15 @@ class TestDialog(QDialog):
         finally:
             self.widget_signal.enable_widget.emit(self.button_6)
 
-    def _launch_offline_game(self, ver, java_path):
+    def _launch_offline_game(self, ver):
         """
         Launch offline game
         :param ver:
-        :param java_path:
         :return:
         """
         try:
             current_status = 0 # 0 = fetch version manifest, 1 = check client, 2 = check libraries
-            # 3 = check libraries, 4 = check assets
+            # , 3 = check assets
 
             # Version manifest
             ver_data = self.get_cached_version_manifest(ver)
@@ -907,62 +906,37 @@ class TestDialog(QDialog):
 
             # Vars
             asset_id = asset_index.get("id")
+            java_major_version = java_version.get("majorVersion")
 
             # Some paths
             core_file_path = Path(self.app.work_dir, "versions", ver, f"{ver}.jar")
             game_dir = Path(self.app.temp_dir, "minecraft")
             game_dir.mkdir(parents=True, exist_ok=True)
             natives_dir = Path(self.app.work_dir, "versions", ver, "natives")
-            assets_dir = Path(self.app.work_dir, "assets")
             libraries_dir = Path(self.app.work_dir, "libraries")
 
             # Check client
-            self._download_client(ver)
-
+            current_status = 1
             if not core_file_path.exists():
-                url, sha1 = get_core_file_download_url_and_hash(ver_data)
+                download_core_file(ver_data, core_file_path, raise_for_null_hash=True)
 
-            try:
-                ver_data = self.get_cached_version_manifest(ver)
+            # Libraries
+            current_status = 2
+            if not check_full_libraries_exists(ver_data, libraries_dir, natives_dir):
+                download_full_libraries(ver_data, libraries_dir, natives_dir)
 
-                if not ver_data:
-                    return
+            # Asset
+            current_status = 3
+            default_assets_dir = Path(self.app.work_dir, "assets")
+            if not check_assets_exist(ver_data, default_assets_dir, launcher_root=self.app.work_dir):
+                download_assets(ver_data, default_assets_dir,
+                                no_hash_check=True,
+                                progress_callback=self.download_signal.progress.emit,
+                                launcher_root=self.app.work_dir)
 
-                url, sha1 = get_core_file_download_url_and_hash(ver_data)
+            assets_dir = find_correct_assets_dir(asset_id, default_assets_dir, self.app.work_dir)
 
-                dest = Path(self.app.work_dir, "versions", ver, f"{ver}.jar")
-
-                file = FileObject(dest, url=url)
-
-                if sha1 is None:
-                    self.app.logger.warning("Client has no sha1.")
-
-                if file.exists and file.verify("sha1", sha1):
-                    self.download_signal.log.emit(f"Client existed and sha1 matches.")
-                elif url is not None:
-                    download_file(file, progress_callback=self.download_signal.progress.emit)
-                elif not url:
-                    self.download_signal.failed.emit("Download URL not found.")
-
-                self.download_signal.log.emit(f"Downloaded URL: {url}")
-            except DownloadException as e:
-                self.widget_signal.show_error_message.emit(
-                    "Unable to download client while downloading it: {}".format(e.user_message),
-                )
-            except Exception as e:
-                self.widget_signal.show_and_print_error_message.emit(
-                    {
-                        "error": traceback.format_exception(e),
-                        "title": "Download Error",
-                        "message": "Unable to download client, an unexpected error occurred."
-                    }
-                )
-            finally:
-                self.widget_signal.enable_widget.emit(self.button_2)
-
-            self._download_libraries(ver)
-            self._download_assets(ver)
-
+            current_status = 4
             classpath = generate_classpath(
                 ver_data,
                 libraries_dir,
@@ -975,6 +949,7 @@ class TestDialog(QDialog):
                 version_name=ver,
                 game_directory=game_dir.as_posix(),
                 assets_root=assets_dir.as_posix(),
+                legacy_assets_root=assets_dir,
                 assets_index_name=asset_id,
                 auth_uuid="00000000000000000000000000000000",
                 auth_access_token="0",
@@ -995,6 +970,36 @@ class TestDialog(QDialog):
                     "Unable to parse arguments because data are invalid.\n"
                 )
                 return
+
+            # Use found java runtime (if available)
+            java_path = self.get_support_runtime_jvm_executable(
+                java_major_version,
+                no_error=True
+            )
+
+            if not java_path:
+                # Ask for a support java version. If not, use system environment java
+                request = SelectPathRequest(
+                    title="Require a java executable path to launch game. (Major Version: {})".format(java_major_version),
+                    message=None,
+                    filter_raw="Java executable (java.exe javaw.exe);;All files (*)"
+                )
+
+                self.widget_signal.ask_for_path.emit(request)
+
+                if not request.wait(120):
+                    self.widget_signal.show_error_message.emit(
+                        "Timed out while waiting for Java executable selection."
+                    )
+                    return
+
+                java_path = request.result()
+
+                if java_path:
+                    self.download_signal.log.emit(f"Use specified java executable path: {java_path}")
+                else:
+                    self.download_signal.log.emit("Use system environment java.")
+                    java_path = "java"
 
             # Finally, generate launch command
             cmd = generate_launch_command(
@@ -1039,7 +1044,7 @@ class TestDialog(QDialog):
                 "Would you like to retry downloading them?\n\n"
         )
 
-        request = YesNoRequest("Redownload", message)
+        request = AskForRequest("Redownload", message)
         request.details = "\n".join(file.posix_path for file in files)
 
         self.widget_signal.askyesno.emit(request)
@@ -1084,4 +1089,93 @@ class TestDialog(QDialog):
 
         return False, pending
 
+    #
+    # JVM Management
+    #
+    @property
+    def jvm_settings_path(self) -> Path:
+        return Path(self.app.work_dir) / "jvms.json"
+
+    def _find_and_save_jvm_search_result(self):
+        installations, errors = find_java_installations()
+        if not installations:
+            self.widget_signal.show_warning_message.emit(
+                "There are no Java installations available in you system.\n"
+            )
+            return []
+
+        if errors:
+            request = AskForRequest("Java Virtual Machine Finder", message = (
+                "Unable to detect below java installation version:\n"
+            ))
+            request.details = "\n".join(path.as_posix() for path in errors)
+            request.use_plain_text = True
+
+            self.widget_signal.askyesno.emit(request)
+
+        self.jvm_settings_path.parent.mkdir(parents=True, exist_ok=True)
+
+        try:
+            with self.jvm_settings_path.open("w") as file:
+                json.dump(installations, file, indent=4)
+
+            return installations
+        except Exception as e:
+            self.widget_signal.show_and_print_error_message.emit(
+                {
+                    "error": traceback.format_exception(e),
+                    "title": "Settings Error",
+                    "message": "An error occurred while attempting to save jvm settings. Please try again.",
+                }
+            )
+
+    def _read_exist_jvm_settings(self):
+        try:
+            return json.loads(self.jvm_settings_path.read_text())
+        except Exception as e:
+            self.widget_signal.show_and_print_error_message.emit(
+                {
+                    "error": traceback.format_exception(e),
+                    "title": "Settings Error",
+                    "message": "An error occurred while reading jvm settings.",
+                }
+            )
+            return None
+
+    def get_or_cache_jvm_settings(self) -> list:
+        if self.jvm_settings_path.exists():
+            exists = self._read_exist_jvm_settings()
+
+            if exists:
+                return exists
+
+        return self._find_and_save_jvm_search_result()
+
+    def get_support_runtime_jvm_executable(self, major_version: int | str, no_error: bool=False) -> str | None:
+        result = self.get_or_cache_jvm_settings()
+
+        if not result:
+            return None
+
+        for item in result:
+            version = item.get("major", None)
+            executable = item.get("executable", None)
+
+            try:
+                version = str(version)
+                major_version = str(major_version)
+            except Exception as e:
+                self.app.logger.warning(
+                    f"Unable to convert version {version} to string: {e}"
+                )
+
+            if major_version == version and executable:
+                return executable
+
+        if not no_error:
+            self.widget_signal.show_error_message.emit(
+                "No Java executable found for major version {}.".format(major_version)
+            )
+
+        return None
 

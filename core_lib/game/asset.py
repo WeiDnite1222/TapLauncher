@@ -9,7 +9,8 @@ import requests
 
 from core_lib.common.common import FileObject, download_multiple_files
 from core_lib.common.exception import VersionDataKeyNotFoundException, AssetManifestFetchException, \
-    HashMismatchException, AssetManifestSaveException, AssetDataKeyNotFoundException, DownloadException
+    HashMismatchException, AssetManifestSaveException, AssetDataKeyNotFoundException, DownloadException, \
+    AssetManifestException
 from core_lib.game.version_info import find_useful_part_in_specific_version_manifest
 
 MOJANG_RESOURCE_ENDPOINT = "https://resources.download.minecraft.net/{beginning}/{hash}"
@@ -103,14 +104,17 @@ def fetch_and_save_asset_manifest(target_version_manifest: dict, destination: Pa
             "Error saving version manifest:\n{}".format(e)
         )
 
-def _check_asset(asset_id: str, asset_data: dict, relative_path: str, assets_dir: Path, virtual: bool, no_hash_check: bool=False)\
+def _check_asset(asset_id: str, asset_data: dict, relative_path: str, assets_dir: Path, launcher_root: Path, virtual: bool,
+                 map_to_resources: bool, no_hash_check: bool=False)\
         -> tuple[FileObject | None, dict | None]:
     """
     Check if asset exists.
     :param asset_data:
     :param relative_path:
     :param assets_dir:
+    :param launcher_root:
     :param virtual:
+    :param map_to_resources:
     :return:
         asset_file: FileObject
         legacy_context: dict
@@ -151,15 +155,23 @@ def _check_asset(asset_id: str, asset_data: dict, relative_path: str, assets_dir
     if virtual:
         legacy_context = {
             "file": file,
-            "target": full_path if virtual else None,
+            "target": full_path,
             "sha1": hash_raw,
-            "destination": Path(assets_dir, "virtual", asset_id, relative_path) if virtual else None,
+            "destination": Path(assets_dir, "virtual", asset_id, relative_path),
+            "size": expected_size,
+        }
+    elif map_to_resources:
+        legacy_context = {
+            "file": file,
+            "target": full_path,
+            "sha1": hash_raw,
+            "destination": Path(launcher_root, "resources", relative_path),
             "size": expected_size,
         }
 
     return file if needs_download else None, legacy_context
 
-def collect_assets_from_manifest(manifest: dict, asset_id: str, assets_dir: Path,
+def collect_assets_from_manifest(manifest: dict, asset_id: str, assets_dir: Path, launcher_root: Path,
                                  max_workers=ASSET_CHECK_MAX_WORKERS,
                                  no_hash_check=False) -> tuple[list[FileObject], list[dict]]:
     """
@@ -168,6 +180,7 @@ def collect_assets_from_manifest(manifest: dict, asset_id: str, assets_dir: Path
     :param manifest:
     :param asset_id:
     :param assets_dir:
+    :param launcher_root:
     :param max_workers:
     :return:
         assets: list[FileObject]
@@ -175,6 +188,7 @@ def collect_assets_from_manifest(manifest: dict, asset_id: str, assets_dir: Path
     """
     objects = manifest.get("objects", [])
     virtual = manifest.get("virtual", False)
+    map_to_resources = manifest.get("map_to_resources", False)
 
     files = []
     legacy_assets = []
@@ -188,7 +202,7 @@ def collect_assets_from_manifest(manifest: dict, asset_id: str, assets_dir: Path
         futures = [
             executor.submit(
                 _check_asset,
-                asset_id, objects[relative_path], relative_path, assets_dir, virtual,
+                asset_id, objects[relative_path], relative_path, assets_dir, launcher_root, virtual, map_to_resources,
                 no_hash_check=no_hash_check
             )
             for relative_path in objects
@@ -341,7 +355,7 @@ def correct_assets_name_and_copy(manifest: dict, assets_dir: Path, output_dir: P
 
     return missing
 
-def download_assets(manifest: dict, assets_dir: Path, no_hash_check: bool=False,
+def download_assets(manifest: dict, assets_dir: Path, launcher_root: Path, no_hash_check: bool=False,
                     progress_callback:  Callable[[str, float], None]=None,
                     redownload_callback: Callable[[list[FileObject]], tuple[bool, list[FileObject]]]=None) -> list[FileObject]:
     _, asset_index, _, _, _, _, _ = find_useful_part_in_specific_version_manifest(manifest)
@@ -366,6 +380,7 @@ def download_assets(manifest: dict, assets_dir: Path, no_hash_check: bool=False,
         asset_manifest,
         asset_id,
         assets_dir,
+        launcher_root,
         no_hash_check=no_hash_check,
     )
 
@@ -378,3 +393,63 @@ def download_assets(manifest: dict, assets_dir: Path, no_hash_check: bool=False,
     )
 
     return fails
+
+def check_assets_exist(manifest: dict, assets_dir: Path, launcher_root: Path, no_hash_check: bool=False) -> bool:
+    _, asset_index, _, _, _, _, _ = find_useful_part_in_specific_version_manifest(manifest)
+
+    asset_id = asset_index.get("id")
+
+    if not asset_id:
+        raise VersionDataKeyNotFoundException(
+            "Asset ID is missing."
+        )
+
+    index_path = Path(assets_dir, "indexes", f"{asset_id}.json")
+
+    asset_manifest = None
+    if not (index_path.exists() and index_path.is_file()):
+        fetch_and_save_asset_manifest(
+            manifest,
+            index_path,
+        )
+
+    with index_path.open() as f:
+        asset_manifest = json.load(f)
+
+    # Download assets files
+    assets, legacy_assets = collect_assets_from_manifest(
+        asset_manifest,
+        asset_id,
+        assets_dir,
+        launcher_root,
+        no_hash_check=no_hash_check,
+    )
+
+    if not assets and not legacy_assets:
+        return True
+
+    return False
+
+def read_exist_assets_indexes(asset_id: str, assets_dir: Path):
+    return json.loads(Path(assets_dir, "indexes", f"{asset_id}.json").open().read())
+
+
+def find_correct_assets_dir(asset_id: str, assets_dir: Path, launcher_root: Path, asset_manifest: dict | None=None) -> Path:
+    try:
+        if not asset_manifest:
+            asset_manifest = read_exist_assets_indexes(asset_id, assets_dir)
+    except FileNotFoundError:
+        raise AssetManifestException(
+            "Asset manifest not found in: {} (Index: {})".format(assets_dir, asset_id),
+        )
+
+    virtual = asset_manifest.get("virtual")
+    map_to_resources = asset_manifest.get("map_to_resources")
+
+    if virtual:
+        return assets_dir / "virtual" / asset_id
+
+    if map_to_resources:
+        return launcher_root / "resources"
+
+    return assets_dir

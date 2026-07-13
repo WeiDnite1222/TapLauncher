@@ -68,22 +68,26 @@ def replace_placeholders(argument, placeholders: dict) -> str:
 
 class ArgumentMappings:
     def __init__(self, player_name="Player", version_name="unknown",
-                 game_directory=None, assets_root=None, assets_index_name=None,
+                 game_directory=None, assets_root=None, legacy_assets_root=None, assets_index_name=None,
                  auth_uuid="00000001-0002-0003-0004-000000000005",
                  auth_access_token="", clientid=None, auth_xuid=None,
-                 user_type=None, version_type=None, natives_directory=None,
+                 user_type=None, user_properties=None, version_type=None, natives_directory=None,
                  launcher_name=None, launcher_version=None,
                  classpath=None, classpath_separator=None, library_directory=None):
         self.player_name = player_name
         self.version_name = version_name
         self.game_directory = game_directory
         self.assets_root = assets_root
+        self.game_assets = legacy_assets_root
         self.assets_index_name = assets_index_name
         self.auth_uuid = auth_uuid
         self.auth_access_token = auth_access_token
         self.clientid = clientid
         self.auth_xuid = auth_xuid
         self.user_type = user_type
+        self.user_properties = user_properties
+        if not isinstance(user_properties, dict):
+            self.user_properties = {}
         self.version_type = version_type
         self.natives_directory = natives_directory
         self.launcher_name = launcher_name
@@ -98,13 +102,16 @@ class ArgumentMappings:
             "version_name": self.version_name,
             "game_directory": self.game_directory,
             "assets_root": self.assets_root,
+            "game_assets": self.game_assets,
             "assets_index_name": self.assets_index_name,
             "auth_uuid": self.auth_uuid,
+            "auth_session": self.auth_access_token,
             "auth_access_token": self.auth_access_token,
             "auth_player_name": self.player_name,
             "clientid": self.clientid,
             "auth_xuid": self.auth_xuid,
             "user_type": self.user_type,
+            "user_properties": self.user_properties,
             "version_type": self.version_type,
             "natives_directory": self.natives_directory,
             "launcher_name": self.launcher_name,

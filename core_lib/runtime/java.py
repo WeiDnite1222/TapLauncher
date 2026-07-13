@@ -13,6 +13,11 @@ from core_lib.common.exception import JavaRuntimeException, JavaRuntimeParseExce
 logger = logging.getLogger("Launcher.CoreLib")
 
 def get_java_version(java_executable_path: str | Path) -> tuple[int, str]:
+    """
+    Get java version by executing `java -version`
+    :param java_executable_path:
+    :return:
+    """
     if isinstance(java_executable_path, Path):
         java_executable_path = java_executable_path.as_posix()
 
@@ -56,7 +61,14 @@ def get_java_version(java_executable_path: str | Path) -> tuple[int, str]:
 
     return major, raw_version
 
-def find_java_installations(extra_install_patterns: list | None=None) -> list[dict]:
+def find_java_installations(extra_install_patterns: list | None=None) -> tuple[list[dict], list[Path]]:
+    """
+    Find Java installations
+    :param extra_install_patterns:
+    :return:
+        installations: List[dict]
+        errors: List[Path]
+    """
     candidates_paths = []
     installations = []
 
@@ -141,11 +153,11 @@ def find_java_installations(extra_install_patterns: list | None=None) -> list[di
             {
                 "major": ver,
                 "raw": raw,
-                "homeDir": converted_path.parent.parent,
-                "executable": converted_path,
+                "homeDir": converted_path.parent.parent.as_posix(),
+                "executable": converted_path.as_posix(),
             }
         )
 
     installations.sort(key=lambda item: item["major"], reverse=True)
 
-    return installations
+    return installations, errors

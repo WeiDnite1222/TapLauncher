@@ -1,6 +1,7 @@
 import json
 import logging
 import re
+import zipfile
 from pathlib import Path
 from typing import Callable
 
@@ -81,7 +82,8 @@ def get_natives_platform_info():
 
     return platform_key_name, platform_rule_name, platform_arch_type
 
-def is_native_allowed(lib_name, platform_key_name, platform_arch_type, unspecified_arch_policy: str="x86_64") -> bool:
+
+def is_native_allowed(lib_name, platform_key_name, platform_arch_type, unspecified_arch_policy: str = "x86_64") -> bool:
     # Parse native key
     match = re.search(r":(natives-[^:]+)$", lib_name)
 
@@ -96,10 +98,12 @@ def is_native_allowed(lib_name, platform_key_name, platform_arch_type, unspecifi
                 native_os_name = parts[1]
                 if unspecified_arch_policy == "universal":
                     arch_type = platform_arch_type
-                    logger.debug(f"This native may for platform \"{native_os_name}\" (\"May\" for all architecture type)")
+                    logger.debug(
+                        f"This native may for platform \"{native_os_name}\" (\"May\" for all architecture type)")
                 else:
                     arch_type = unspecified_arch_policy
-                    logger.debug(f"This native may for platform \"{native_os_name}\" and specific architecture type {unspecified_arch_policy}")
+                    logger.debug(
+                        f"This native may for platform \"{native_os_name}\" and specific architecture type {unspecified_arch_policy}")
 
             elif len(parts) == 3:  # With architecture type
                 native_os_name, arch_type = parts[1], parts[2]
@@ -120,7 +124,9 @@ def is_native_allowed(lib_name, platform_key_name, platform_arch_type, unspecifi
 
     return False
 
-def is_legacy_native_allowed(natives, classifiers, platform_rule_name, platform_arch_type, unspecified_arch_policy: str="x86_64") -> tuple[bool, dict | None, str | None]:
+
+def is_legacy_native_allowed(natives, classifiers, platform_rule_name, platform_arch_type,
+                             unspecified_arch_policy: str = "x86_64") -> tuple[bool, dict | None, str | None]:
     valid_non_arch_values = {
         "universal",
         "x86",
@@ -174,10 +180,12 @@ def is_legacy_native_allowed(natives, classifiers, platform_rule_name, platform_
                 if unspecified_arch_policy == "universal":
                     universal = True
                     arch_type = platform_arch_type
-                    logger.debug(f"This native may for platform \"{native_os_name}\" (\"May\" for all architecture type)")
+                    logger.debug(
+                        f"This native may for platform \"{native_os_name}\" (\"May\" for all architecture type)")
                 else:
                     arch_type = unspecified_arch_policy
-                    logger.debug(f"This native may for platform \"{native_os_name}\" and specific architecture type {unspecified_arch_policy}")
+                    logger.debug(
+                        f"This native may for platform \"{native_os_name}\" and specific architecture type {unspecified_arch_policy}")
             elif len(parts) == 3:
                 native_os_name, arch_type = parts[1].lower(), parts[2].lower()
                 logger.debug(f"This native may for platform \"{native_os_name}\" and architecture type \"{arch_type}\"")
@@ -194,6 +202,7 @@ def is_legacy_native_allowed(natives, classifiers, platform_rule_name, platform_
                 return True, data_raw, native
 
     return False, None, None
+
 
 def generate_relative_path_by_maven_coordinate(maven_coordinate: str, extra=None) -> str | None:
     parts = maven_coordinate.split(":")
@@ -212,6 +221,7 @@ def generate_relative_path_by_maven_coordinate(maven_coordinate: str, extra=None
         filename += f"-{classifier}"
 
     return f"{base_path}/{artifact}/{version}/{filename}.jar"
+
 
 def remove_duplicate_artifacts(artifacts: list[dict], ignore_null=False, compare_by_name=False) -> list[dict]:
     seen = set()
@@ -238,8 +248,9 @@ def remove_duplicate_artifacts(artifacts: list[dict], ignore_null=False, compare
 
     return result
 
+
 def generate_formatted_artifact_with_name(lib_name, lib_artifact, libraries_endpoint=MOJANG_LIBRARIES_ENDPOINT,
-                                          extra: dict | None=None, relative_args: dict|None=None) -> dict | None:
+                                          extra: dict | None = None, relative_args: dict | None = None) -> dict | None:
     """
     Generates a formatted artifact
     :param lib_name: Library name
@@ -276,6 +287,7 @@ def generate_formatted_artifact_with_name(lib_name, lib_artifact, libraries_endp
         artifact_new.update(extra)
 
     return artifact_new
+
 
 def collect_library_artifacts(specific_version_manifest):
     _, _, _, _, libraries, _, _ = find_useful_part_in_specific_version_manifest(specific_version_manifest)
@@ -439,7 +451,8 @@ def collect_native_artifacts(specific_version_manifest):
 
     return items
 
-def download_libraries(artifacts, output_dir, progress_callback: Callable[[str, float], None]=None) \
+
+def download_libraries(artifacts, output_dir, progress_callback: Callable[[str, float], None] = None) \
         -> tuple[list[FileObject], list[FileObject]]:
     """
     Download libraries from a list that contains artifacts
@@ -486,6 +499,7 @@ def download_libraries(artifacts, output_dir, progress_callback: Callable[[str, 
     successes.extend(finished)
 
     return fails, successes
+
 
 def unzip_natives(filtered, libraries_dir, destination: Path):
     """
@@ -579,6 +593,136 @@ def check_libraries_exists(manifest: dict, libraries_dir: Path):
 
     return not_found
 
+
+def check_natives_exists(manifest: dict, libraries_dir: Path, natives_dir: Path):
+    filtered = []
+
+    # Convert current platform and architecture type to same formula
+    _, _, os_version = get_platform_info()
+    platform_key_name, platform_rule_name, platform_arch_type = get_natives_platform_info()
+
+    if platform_key_name is None or platform_arch_type is None or platform_rule_name is None:
+        raise UnsupportedPlatformException(
+            f"Unsupported platform: key={platform_key_name}, "
+            f"rule={platform_rule_name}, arch={platform_arch_type}"
+        )
+
+    _, _, _, _, libraries, _, _ = find_useful_part_in_specific_version_manifest(manifest)
+
+    for library in libraries:
+        name = library.get("name", "")
+        artifact = library.get("downloads", {}).get("artifact", {})
+        # For newer Minecraft (VER>1.7.10)
+        rules = library.get("rules", [])
+        # For legacy version (VER<1.8)
+        classifiers = library.get("downloads", {}).get("classifiers", {})
+        natives = library.get("natives", {})
+        exclude = library.get("extract", {}).get("exclude", ["META-INF/"])  # For extract use
+
+        is_natives = False
+
+        # Check if library is a native
+        if (len(natives) > 0 or bool(re.search(r":natives-[^:]+$", name)) or
+                any(native.startswith("natives-") for native in classifiers)):
+            is_natives = True
+
+        if not is_natives:
+            continue
+
+        # =============== New rules ===============
+
+        # Parse action section
+        if not is_library_allowed(
+                rules,
+                platform_rule_name,
+                platform_arch_type,
+                os_version,
+        ):
+            continue
+
+        if is_native_allowed(
+                name,
+                platform_key_name,
+                platform_arch_type,
+        ):
+            result_artifact = generate_formatted_artifact_with_name(name, artifact, extra={"exclude": exclude,
+                                                                                           "flatten": True})
+            if result_artifact:
+                filtered.append(result_artifact)
+
+        # =============== Old rules ===============
+        result, result_artifact, classifier = is_legacy_native_allowed(
+            natives,
+            classifiers,
+            platform_rule_name,
+            platform_arch_type,
+        )
+
+        if not result:
+            continue
+
+        result_artifact = generate_formatted_artifact_with_name(name,
+                                                                result_artifact,
+                                                                extra={"exclude": exclude, "flatten": True},
+                                                                relative_args={
+                                                                    "extra": classifier
+                                                                })
+
+        if result_artifact:
+            filtered.append(result_artifact)
+
+    # Remove duplicate items
+    items = remove_duplicate_artifacts(filtered)
+
+    if not filtered:
+        raise NativeResolveException(
+            "No compatible native artifact found.",
+            user_message="No compatible native library was found for this platform.",
+        )
+    elif not items:
+        raise NativeResolveException(
+            "No compatible native artifact found. Report developer because this may be a issue"
+            " at function \"remove_duplicate_artifacts\"",
+        )
+
+    expected = set()
+
+    for result_artifact in items:
+        full_path = libraries_dir / Path(result_artifact["path"])
+        exclude = result_artifact.get("exclude", []) or []
+        flatten = result_artifact.get("flatten", False)
+
+        if not full_path.is_file() or not full_path.exists():
+            return False
+
+        with zipfile.ZipFile(full_path) as zf:
+            for member in zf.namelist():
+                if member.endswith("/"):
+                    continue
+                if any(member.startswith(item) for item in exclude):
+                    continue
+
+                target = Path(member).name if flatten else member
+                if target:
+                    expected.add(target)
+
+    if not expected:
+        return False
+
+    for target in expected:
+        if not (natives_dir / target).exists():
+            return False
+
+    return True
+
+
+def check_full_libraries_exists(manifest: dict, libraries_dir: Path, natives_dir: Path) -> bool:
+    if not check_natives_exists(manifest, libraries_dir, natives_dir) or not check_libraries_exists(manifest, libraries_dir):
+        return False
+
+    return True
+
+
 def generate_classpath(manifest: dict, libraries_dir: Path, core_file_path: Path):
     """
     Generate classpath by using specific version's data
@@ -645,9 +789,11 @@ def generate_classpath(manifest: dict, libraries_dir: Path, core_file_path: Path
 
     return f"{separator}".join(classes)
 
+
 def download_full_libraries(manifest: dict, libraries_dir: Path, natives_dir: Path,
-                            progress_callback:  Callable[[str, float], None]=None,
-                            redownload_callback: Callable[[list[FileObject]], tuple[bool, list[FileObject]]]=None) -> None:
+                            progress_callback: Callable[[str, float], None] = None,
+                            redownload_callback: Callable[
+                                [list[FileObject]], tuple[bool, list[FileObject]]] = None) -> None:
     # libraries
     libraries = collect_library_artifacts(manifest)
 
@@ -683,5 +829,3 @@ def download_full_libraries(manifest: dict, libraries_dir: Path, natives_dir: Pa
         raise DependencyException(
             "Certain libraries download failed. Unable to continue unzip process.\n"
         )
-
-

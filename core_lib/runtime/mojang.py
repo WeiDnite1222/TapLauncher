@@ -308,8 +308,8 @@ def handle_runtime_dir_and_executable_process(dirs: list[Path], executables: lis
 def download_java_runtimes(component: str, runtime_dir: Path, no_hash_check: bool = False,
                            progress_callback: Callable[[str, float], None] = None,
                            redownload_callback: Callable[[list[FileObject]], tuple[bool, list[FileObject]]] = None,
-                           max_download_workers=RUNTIME_CHECK_MAX_WORKERS,
-                           max_check_workers=RUNTIME_DOWNLOAD_MAX_WORKERS) -> None:
+                           max_download_workers=RUNTIME_DOWNLOAD_MAX_WORKERS,
+                           max_check_workers=RUNTIME_CHECK_MAX_WORKERS) -> None:
     """
     Download runtime files from given component.
     :param component: Target component of the java runtime (e.g. java-runtime-alpha, java-runtime-beta)
