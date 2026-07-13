@@ -2,7 +2,7 @@ import logging
 from pathlib import Path
 
 from PySide6.QtGui import QIcon, Qt, QImage, QPixmap
-from PySide6.QtWidgets import QApplication, QMainWindow, QLabel, QVBoxLayout, QWidget
+from PySide6.QtWidgets import QApplication, QMainWindow, QLabel, QVBoxLayout, QWidget, QPushButton
 
 from core_lib.qt.hack import move_window_to_center
 from dialog.test import TestDialog
@@ -59,6 +59,10 @@ class Launcher(QApplication):
         else:
             self.icon_label.setText("Ouch. The icon is missing.")
 
+        self.open_test_window = QPushButton("Open test")
+        self.open_test_window.clicked.connect(lambda : self.test_dialog.show())
+        self.open_test_window.setObjectName("open_test_window")
+
         self.main_layout.addStretch()
         self.main_layout.addWidget(self.icon_label, alignment=Qt.AlignmentFlag.AlignCenter)
         self.main_layout.addWidget(self.dev_info_box, alignment=Qt.AlignmentFlag.AlignHCenter)
@@ -66,6 +70,7 @@ class Launcher(QApplication):
         self.main_layout.addWidget(self.version_label, alignment=Qt.AlignmentFlag.AlignHCenter)
         self.main_layout.addWidget(self.repo_url_label, alignment=Qt.AlignmentFlag.AlignHCenter)
         self.main_layout.addStretch()
+        self.main_layout.addWidget(self.open_test_window, alignment=Qt.AlignmentFlag.AlignRight)
 
         self.main_window.setCentralWidget(self.central)
 
@@ -85,6 +90,10 @@ class Launcher(QApplication):
         
         QLabel#icon_label {
             border-radius: 20px; 
+        }
+        
+        QPushButton#open_test_window {
+            padding: 10px;
         }
         """)
 
