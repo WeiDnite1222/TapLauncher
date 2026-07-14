@@ -75,3 +75,15 @@ class RuntimeManifestFetchException(LauncherException):
 
 class RuntimeManifestDataException(LauncherException):
     user_message = "Runtime manifest is missing or corrupted."
+
+class ProfileException(LauncherException):
+    user_message = "An error occurred while processing profile."
+
+class ProfileSaveException(LauncherException):
+    user_message = "Unable to save profile. Try again later."
+
+class ProfileLoadException(LauncherException):
+    user_message = "Unable to load profile. Profile may corrupted"
+
+class ProfileKeyNotFoundException(LauncherException):
+    user_message = "Specified profile key not found. Profile may corrupted."

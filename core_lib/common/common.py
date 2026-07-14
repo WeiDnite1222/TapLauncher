@@ -200,7 +200,7 @@ def download_file(file: FileObject, overwrite=True, progress_callback: Callable[
 
     return file
 
-def download_multiple_files(files: List[FileObject], download_callback: Callable[str]=None,
+def download_multiple_files(files: List[FileObject], download_callback: Callable[[str], None]=None,
                             max_workers=THREADED_DOWNLOAD_MAX_WORKERS, progress_callback: Callable[str]=None) \
         -> tuple[list[FileObject], list[FileObject]]:
     """

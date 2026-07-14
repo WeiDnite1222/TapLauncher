@@ -5,24 +5,38 @@ from typing import Callable
 from PySide6 import QtWidgets
 from PySide6.QtCore import QSize
 from PySide6.QtGui import QIcon, Qt, QPixmap
-from PySide6.QtWidgets import QApplication, QMainWindow, QLabel, QVBoxLayout, QWidget, QPushButton, QStyle, QToolButton, \
+from PySide6.QtWidgets import QApplication, QMainWindow, QLabel, QVBoxLayout, QWidget, QStyle, QToolButton, \
     QStackedWidget
 
-from core_lib.qt.hack import move_window_to_center, recolor_standard_icon
+from core_lib.qt.hack import move_window_to_center, is_light_theme, \
+    recolor_icon
 from core_lib.qt import messagebox
+from pages.account import AccountPage
 from pages.test import TestPage
 
-LAUNCHER_VERSION = "alpha_0.0.1"
+LAUNCHER_VERSION = "alpha_0.0.2"
 MAIN_REPO_URL = "https://repo.weispace.net/wei/Launcher/"
 
 class ToolBar(QtWidgets.QToolBar):
     def __init__(self, app: QApplication, parent=None):
         super(ToolBar, self).__init__(parent)
         self.app = app
+        self.spacer = QWidget()
         self.orientationChanged.connect(self._update_widget_size)
 
     def _update_widget_size(self, orientation):
         vertical = orientation == Qt.Orientation.Vertical
+
+        if vertical:
+            self.spacer.setSizePolicy(
+                    QtWidgets.QSizePolicy.Policy.Preferred,
+                    QtWidgets.QSizePolicy.Policy.Expanding,
+                )
+        else:
+            self.spacer.setSizePolicy(
+                QtWidgets.QSizePolicy.Policy.Expanding,
+                QtWidgets.QSizePolicy.Policy.Preferred,
+            )
 
         for button in self.findChildren(QToolButton):
             if vertical:
@@ -140,9 +154,13 @@ class Launcher(QApplication):
         # test page
         self.test_page = TestPage(self, self.main_window)
 
+        # Account page
+        self.account_page = AccountPage(self, self.main_window)
+
         # Add page
         self.central.addWidget(self.home_page)
         self.central.addWidget(self.test_page)
+        self.central.addWidget(self.account_page)
 
         # Bind toolbar and center widget
         self.main_window.addToolBar(Qt.ToolBarArea.LeftToolBarArea, self.toolbar)
@@ -155,29 +173,39 @@ class Launcher(QApplication):
         # Toolbar
 
         # Test Window btn
-        self.open_test_page = self.toolbar.add_button(" Tests", icon=QIcon(Path(self.icon_dir, "debug.png").as_posix()))
+        self.open_test_page = self.toolbar.add_button(" Tests", icon=self.get_icon(Path(self.icon_dir, "debug.png")))
         self.open_test_page.setObjectName("open_test_page")
 
         # Home btn
-        self.home_button = self.toolbar.add_button(icon=QIcon(Path(self.icon_dir, "home.png").as_posix()))
-        self.home_button.clicked.connect(
-            lambda: self.central.setCurrentWidget(self.home_page)
-        )
+        self.home_button = self.toolbar.add_button(icon=self.get_icon(Path(self.icon_dir, "home.png")))
+
+        # Account btn (will be moved to the bottom (or last one item) of the toolbar
+        self.open_account_page = self.toolbar.add_button(icon=self.get_icon(Path(self.icon_dir, "head.png")))
+
+        # Profile page
 
         # Bind tool buttons
         self.toolbar.addWidget(self.home_button)
-        self.toolbar.addSeparator()
         self.toolbar.addWidget(self.open_test_page)
         self.toolbar.setMovable(True)
         self.toolbar.setFloatable(False)
         self.toolbar.setAllowedAreas(Qt.ToolBarArea.AllToolBarAreas)
 
+        self.toolbar.addWidget(self.toolbar.spacer)
+        self.toolbar.addSeparator()
+        self.toolbar.addWidget(self.open_account_page)
+
+        # Bind page-related button click event
         self.home_button.clicked.connect(
             lambda: self.set_current_page(self.home_page, self.home_button)
         )
 
         self.open_test_page.clicked.connect(
             lambda: self.set_current_page(self.test_page, self.open_test_page)
+        )
+
+        self.open_account_page.clicked.connect(
+            lambda: self.set_current_page(self.account_page, self.open_account_page)
         )
 
         self.set_current_page(self.home_page, self.home_button)
@@ -190,6 +218,55 @@ class Launcher(QApplication):
     def set_current_page(self, page: QWidget, related_button: QToolButton):
         self.central.setCurrentWidget(page)
         related_button.setFocus()
+
+    def get_icon(self, path: Path):
+        icon = self.style().standardIcon(QStyle.StandardPixmap.SP_MessageBoxWarning)
+        if not path.exists() or not path.is_file():
+            messagebox.error(
+                self.main_window,
+                "Resource Error",
+                "Missing icon file: {}".format(path)
+            )
+
+            return icon
+
+        try:
+            if is_light_theme() and path.name.endswith(".png"):
+                icon = recolor_icon(
+                    path
+                )
+            else:
+                icon = QIcon(path.as_posix())
+        except Exception as e:
+            messagebox.error(
+                self.main_window,
+                "Resource Error",
+                "Failed to load icon {}: {}".format(path, e)
+            )
+
+        return icon
+
+    def get_picture(self, path: Path, size: QSize, custom_error: str=None) -> QPixmap:
+        picture = self.style().standardIcon(QStyle.StandardPixmap.SP_MessageBoxWarning).pixmap(size)
+        if not path.exists() or not path.is_file():
+            messagebox.error(
+                self.main_window,
+                "Resource Error",
+                "Missing icon file: {}".format(path) if not custom_error else custom_error
+            )
+
+            return picture
+
+        try:
+            picture = QPixmap(path.as_posix())
+        except Exception as e:
+            messagebox.error(
+                self.main_window,
+                "Resource Error",
+                "Failed to load icon {}: {}".format(path, e)
+            )
+
+        return picture
 
     @property
     def temp_dir(self):

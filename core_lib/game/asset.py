@@ -223,7 +223,7 @@ def collect_assets_from_manifest(manifest: dict, asset_id: str, assets_dir: Path
 
 def download_assets_and_copy(assets: list[FileObject], legacy_assets: list[dict],
                              no_hash_check: bool=False, allow_missing=False,
-                             progress_callback: Callable[str]=None,
+                             progress_callback: Callable[[str], None]=None,
                              redownload_callback: Callable[[list[FileObject]], tuple[bool, list[FileObject]]]=None) -> list[FileObject]:
     """
     Download assets from target version's asset manifest. (Not sure why this function exist, may for compatibly)
