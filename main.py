@@ -2,7 +2,6 @@ import os
 import sys
 import argparse
 import logging
-
 from app import Launcher
 from tkinter import messagebox
 

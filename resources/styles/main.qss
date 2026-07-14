@@ -1,0 +1,28 @@
+/*
+ * main - Qt Style Sheet
+ * Created: 2026/7/14
+ *
+ * QSS Toolkit Quick Tips:
+ * - Press Ctrl+Space (Cmd+Space) for intelligent auto-completion
+ * - Use Ctrl+/ (Cmd+/) to comment/uncomment code blocks
+ * - Use the QSS Colors panel and editor context menu to save or insert colors
+ */
+
+/* Add your QSS styles here */
+
+QLabel#dev_info_box {
+    font-size: 20pt;
+    font-weight: bold;
+}
+
+QLabel#dev_info_message {
+    font-size: 10pt;
+}
+
+QLabel#version_label, QLabel#version_label {
+    font-weight: bold;
+}
+
+QLabel#icon_label {
+    border-radius: 20px;
+}

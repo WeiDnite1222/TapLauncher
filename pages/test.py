@@ -8,8 +8,8 @@ import traceback
 from pathlib import Path
 
 from PySide6.QtCore import Qt, QObject, Signal, Slot
-from PySide6.QtWidgets import QPushButton, QVBoxLayout, QDialog, QPlainTextEdit, \
-    QHBoxLayout, QComboBox, QMessageBox, QFileDialog
+from PySide6.QtWidgets import QPushButton, QVBoxLayout, QPlainTextEdit, \
+    QHBoxLayout, QComboBox, QMessageBox, QFileDialog, QWidget
 
 from core_lib.common.common import FileObject, download_multiple_files
 from core_lib.common.exception import VersionNotSelectedException, UnsupportedPlatformException, \
@@ -19,11 +19,9 @@ from core_lib.common.exception import VersionNotSelectedException, UnsupportedPl
 from core_lib.game.argument import ArgumentMappings, parse_and_generate_arguments, find_game_and_jvm_args, \
     generate_launch_command
 from core_lib.game.asset import download_assets, check_assets_exist, find_correct_assets_dir
-from core_lib.game.library import generate_classpath, download_full_libraries, check_libraries_exists, \
-    check_full_libraries_exists
+from core_lib.game.library import generate_classpath, download_full_libraries, check_full_libraries_exists
 
-from core_lib.game.version_info import (find_useful_part_in_specific_version_manifest,
-                                        get_core_file_download_url_and_hash, \
+from core_lib.game.version_info import (find_useful_part_in_specific_version_manifest, \
                                         get_all_versions, get_available_version_types, \
                                         fetch_and_save_version_manifest, get_specific_version_manifest_url_and_hash,
                                         download_core_file)
@@ -62,7 +60,7 @@ class SelectPathRequest(AskForRequest):
         self.filter = filter_raw
 
 
-class TestDialog(QDialog):
+class TestPage(QWidget):
     def __init__(self, app, parent):
         super().__init__(parent)
         self.app = app

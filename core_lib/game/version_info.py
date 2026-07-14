@@ -459,7 +459,7 @@ def fetch_and_save_version_manifest(dest: Path, target_version: str=None, root_m
         )
 
 def download_core_file(manifest: dict, destination: Path, is_server=False, raise_for_null_hash=False,
-                       progress_callback: Callable[str]=None) -> FileObject:
+                       progress_callback: Callable[[str, float], None]=None) -> FileObject:
     """
     Download core file from version manifest.
     :param manifest:

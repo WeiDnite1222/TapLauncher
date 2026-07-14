@@ -1,0 +1,99 @@
+/* Disable default style */
+QToolBar {
+    margin: 0;
+    spacing: 1px;
+    background-color: palette(window);
+    border: none;
+}
+
+QToolBar:top {
+    border-bottom: 2px solid palette(mid);
+}
+
+QToolBar:bottom {
+    border-top: 2px solid palette(mid);
+}
+
+QToolBar:left {
+    border-right: 2px solid palette(mid);
+}
+
+QToolBar:right {
+    border-left: 2px solid palette(mid);
+}
+
+QToolBar::separator {
+    background-color: palette(midlight);
+    width: 1px;
+    height: 1px;
+}
+
+/* Button */
+QToolBar QPushButton,
+QToolBar QToolButton {
+    margin: 0;
+    padding: 14px 14px;
+    border: none;
+    border-radius: 0;
+    background-color: palette(button);
+    color: palette(button-text);
+    font-size: 13px;
+    min-height: 28px;
+}
+
+QToolBar:left QPushButton,
+QToolBar:right QPushButton,
+QToolBar:left QToolButton,
+QToolBar:right QToolButton {
+    padding: 14px 6px;
+    min-width: 0;
+}
+
+QToolBar QPushButton:hover,
+QToolBar QToolButton:hover {
+    background-color: palette(midlight);
+}
+
+QToolBar QPushButton:focus,
+QToolBar QToolButton:focus {
+    border-bottom: 2px solid #F52761;
+}
+
+QToolBar QPushButton:pressed,
+QToolBar QToolButton:pressed,
+QToolBar QToolButton:checked {
+    background-color: palette(dark);
+}
+
+QToolBar QPushButton:disabled,
+QToolBar QToolButton:disabled {
+    color: palette(mid);
+}
+
+/* Button margin */
+
+/* Toolbar */
+QToolBar::handle:top, QToolBar::handle:bottom {
+    border-left: 5px solid palette(midlight);
+    width: 5px;
+}
+
+/*QToolBar:top {*/
+/*    border-bottom: 3px solid palette(midlight);*/
+/*}*/
+
+/*QToolBar:bottom {*/
+/*    border-top: 3px solid palette(midlight);*/
+/*}*/
+
+/*QToolBar:left {*/
+/*    border-right: 3px solid palette(midlight);*/
+/*}*/
+
+/*QToolBar:right {*/
+/*    border-left: 3px solid palette(midlight);*/
+/*}*/
+
+QToolBar::handle:right, QToolBar::handle:left {
+    border-top: 3px solid palette(midlight);
+}
