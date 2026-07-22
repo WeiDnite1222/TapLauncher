@@ -1,4 +1,5 @@
 import logging
+import re
 import shlex
 
 from core_lib.game.library import get_natives_platform_info
@@ -230,3 +231,53 @@ def generate_launch_command(arg_maps: ArgumentMappings, main_class: str, java_pa
     cmd.extend(parsed_game_args)
 
     return cmd
+
+def is_a_argument(arg: str, startswith="--"):
+    pattern = re.compile(rf"{startswith}(.+)")
+    return pattern.match(arg) is not None
+
+def generate_argument_details(arguments: list[str | dict], startswith="--") -> list[dict]:
+    items = []
+
+    for index, arg in enumerate(arguments):
+        if isinstance(arg, str) and is_a_argument(arg, startswith):
+            items.append({
+                "value": arg,
+                "type": "argument",
+                "dataType": "string",
+            })
+
+            if index > 0:
+                previous = items[index - 1]
+                if previous["type"] == "argument":
+                    previous["isFlag"] = True
+        elif isinstance(arg, str):
+            items.append({
+                "value": arg,
+                "type": "value",
+            })
+        elif isinstance(arg, dict):
+            value = arg.get("value", None)
+
+            if not value:
+                raise ValueError("Dictionary argument must contain a value")
+
+            items.append({
+                "value": value,
+                "type": "argument",
+                "dataType": "dictionary",
+                "dictValue": arg,
+            })
+
+    return items
+
+def is_same_argument(item: dict, another: dict) -> bool:
+    pass
+
+
+
+
+
+
+
+

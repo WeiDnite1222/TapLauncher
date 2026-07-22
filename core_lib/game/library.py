@@ -4,6 +4,7 @@ import re
 import zipfile
 from pathlib import Path
 from typing import Callable
+from urllib.parse import urlsplit, unquote
 
 from ..common.common import get_platform_info, FileObject, download_multiple_files, unzip
 from .version_info import (
@@ -19,6 +20,87 @@ from ..common.exception import UnsupportedPlatformException, NativeResolveExcept
 
 logger = logging.getLogger("Launcher.CoreLib")
 
+def parse_maven_coordinate(value: str, default_extension="jar"):
+    value = value.strip()
+
+    coordinate, separator, extension = value.partition("@")
+    parts = coordinate.split(":")
+
+    if len(parts) not in (3, 4):
+        raise ValueError(f"Invalid maven coordinate {value}")
+
+    group, artifact, version = parts[:3]
+    classifier = parts[3] if len(parts) == 4 else None
+
+    if version.count("-") > 0:
+        version, extra = version.split("-", 1)
+
+    if not group or not artifact or not version:
+        raise ValueError(f"Coordinate key can not be empty: {value!r}")
+
+    if not extension:
+        extension = default_extension
+
+    return group, artifact, version, classifier, extension
+
+def convert_maven_version(version: str, failback=None) -> tuple[int, int, int]:
+    try:
+        print(version)
+        items = version.split(".")
+        if len(items) >= 3:
+            major, minor, patch = items[0], items[1], items[2]
+            if len(items) > 3:
+                logger.debug(f"Found version tag: {".".join(items)}")
+        elif len(items) == 2:
+            major, minor, patch = 0, items[0], items[1]
+        else:
+            raise ValueError(f"Unable to parse version: {version!r}")
+
+        return int(major), int(minor), int(patch)
+    except ValueError:
+        return failback
+
+def generate_filename_from_maven_coordinate(artifact: str, version, classifier="", extension="jar") -> str:
+    classifier = f"-{classifier}" if classifier else ""
+
+    return (
+        f"{artifact}-"
+        f"{version}"
+        f"{classifier}."
+        f"{extension}"
+    )
+
+def generate_repo_path(group: str, artifact: str, version: str, filename) -> str:
+    group_path = group.replace(".", "/")
+
+    return (
+        f"{group_path}/"
+        f"{artifact}/"
+        f"{version}/"
+        f"{filename}"
+    )
+
+def is_complete_maven_url(url: str, group: str, artifact: str, version: str, classifier: str="", extension: str=".jar") -> bool:
+    filename = generate_filename_from_maven_coordinate(artifact, version, classifier=classifier, extension=extension)
+    repository_path = generate_repo_path(group, artifact, version, filename)
+    parsed = urlsplit(url)
+
+    if parsed.scheme not in ("http", "https"):
+        return False
+
+    path = unquote(parsed.path).replace("\\", "/")
+    expected_path = "/" + repository_path
+
+    return path.endswith(expected_path)
+
+def generate_repo_url(maven_url: str, group: str, artifact: str, version: str, classifier="", extension=".jar") -> str:
+    filename = generate_filename_from_maven_coordinate(artifact, version, classifier=classifier, extension=extension)
+    path = generate_repo_path(group, artifact, version, filename)
+
+    if not maven_url.endswith("/"):
+        maven_url += "/"
+
+    return f"{maven_url}{path}"
 
 def is_library_allowed(rules, platform_rule_name, platform_arch_type, platform_version):
     """

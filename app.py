@@ -11,7 +11,10 @@ from PySide6.QtWidgets import QApplication, QMainWindow, QLabel, QVBoxLayout, QW
 from core_lib.qt.hack import move_window_to_center, is_light_theme, \
     recolor_icon
 from core_lib.qt import messagebox
+from core_lib.launcher.object import Launcher as LauncherObject
+
 from pages.account import AccountPage
+from pages.create_profile import CreateProfile
 from pages.test import TestPage
 
 LAUNCHER_VERSION = "alpha_0.0.2"
@@ -63,7 +66,7 @@ class ToolBar(QtWidgets.QToolBar):
                 button.setToolButtonStyle(
                     Qt.ToolButtonStyle.ToolButtonTextBesideIcon
                 )
-                button.setFixedWidth(150)
+                button.setMinimumWidth(60)
 
     def add_button(self, text=None, icon: QIcon=None) -> QToolButton:
         button = QtWidgets.QToolButton(self)
@@ -71,6 +74,8 @@ class ToolBar(QtWidgets.QToolBar):
         if text:
             text = " "+text
             button.setText(text)
+        # else:
+        #     button.setText("\u00a0")
 
         if icon:
             button.setIcon(icon)
@@ -86,6 +91,7 @@ class ToolBar(QtWidgets.QToolBar):
             )
 
         button.setAutoRaise(True)
+        button.setFixedHeight(60)
 
         return button
 
@@ -93,7 +99,7 @@ class ToolBar(QtWidgets.QToolBar):
         self._update_widget_size(self.orientation())
         self.update()
 
-class Launcher(QApplication):
+class Launcher(QApplication, LauncherObject):
     def __init__(self):
         super().__init__()
         # Window config
@@ -157,10 +163,14 @@ class Launcher(QApplication):
         # Account page
         self.account_page = AccountPage(self, self.main_window)
 
+        # Profile page
+        self.create_profile_page = CreateProfile(self, self.main_window)
+
         # Add page
         self.central.addWidget(self.home_page)
         self.central.addWidget(self.test_page)
         self.central.addWidget(self.account_page)
+        self.central.addWidget(self.create_profile_page)
 
         # Bind toolbar and center widget
         self.main_window.addToolBar(Qt.ToolBarArea.LeftToolBarArea, self.toolbar)
@@ -182,11 +192,13 @@ class Launcher(QApplication):
         # Account btn (will be moved to the bottom (or last one item) of the toolbar
         self.open_account_page = self.toolbar.add_button(icon=self.get_icon(Path(self.icon_dir, "head.png")))
 
-        # Profile page
+        # Profile btn
+        self.open_create_profile_page = self.toolbar.add_button(icon=self.get_icon(Path(self.icon_dir, "add_temp.png")))
 
         # Bind tool buttons
         self.toolbar.addWidget(self.home_button)
         self.toolbar.addWidget(self.open_test_page)
+        self.toolbar.addWidget(self.open_create_profile_page)
         self.toolbar.setMovable(True)
         self.toolbar.setFloatable(False)
         self.toolbar.setAllowedAreas(Qt.ToolBarArea.AllToolBarAreas)
@@ -206,6 +218,10 @@ class Launcher(QApplication):
 
         self.open_account_page.clicked.connect(
             lambda: self.set_current_page(self.account_page, self.open_account_page)
+        )
+
+        self.open_create_profile_page.clicked.connect(
+            lambda: self.set_current_page(self.create_profile_page, self.open_create_profile_page)
         )
 
         self.set_current_page(self.home_page, self.home_button)

@@ -19,16 +19,18 @@ THREADED_DOWNLOAD_MAX_WORKERS = 10
 logger = logging.getLogger("Launcher.CoreLib")
 
 class FileObject:
-    def __init__(self, path: Path, url=None, sha1=None, sha256=None, md5=None, size=None):
+    def __init__(self, path: Path, url=None, sha1=None, sha256=None, sha512=None, md5=None, size=None):
         self.__path = path
 
         self.expected_sha1 = sha1
         self.expected_sha256 = sha256
+        self.expected_sha512 = sha512
         self.expected_md5 = md5
         self.expected_size = size
 
         self.__sha1 = None
         self.__sha256 = None
+        self.__sha512 = None
         self.__md5 = None
 
         self.url = url
@@ -74,6 +76,13 @@ class FileObject:
         return self.__sha256
 
     @property
+    def sha512(self):
+        if self.__sha512 is None:
+            self.__sha512 = self._calculate_hash("sha512")
+
+        return self.__sha512
+
+    @property
     def md5(self):
         if self.__md5 is None:
             self.__md5 = self._calculate_hash("md5")
@@ -86,6 +95,9 @@ class FileObject:
     def verify_sha256(self, expected_hash=None):
         return self.sha256 == expected_hash if expected_hash else self.expected_sha256 == self.sha256
 
+    def verify_sha512(self, expected_hash=None):
+        return self.sha512 == expected_hash if expected_hash else self.expected_sha512 == self.sha512
+
     def verify_md5(self, expected_hash=None):
         return self.sha1 == expected_hash if expected_hash else self.expected_sha1 == self.sha1
 
@@ -95,6 +107,9 @@ class FileObject:
 
         if algorithm == "sha256":
             return self.verify_sha256(expected_hash if expected_hash else self.expected_sha256)
+
+        if algorithm == "sha512":
+            return self.verify_sha512(expected_hash if expected_hash else self.expected_sha512)
 
         if algorithm == "md5":
             return self.verify_md5(expected_hash if expected_hash else self.expected_md5)

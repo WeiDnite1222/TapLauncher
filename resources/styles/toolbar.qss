@@ -47,6 +47,7 @@ QToolBar:left QToolButton,
 QToolBar:right QToolButton {
     padding: 14px 6px;
     min-width: 0;
+    border-bottom: 2px solid palette(midlight);
 }
 
 QToolBar QPushButton:hover,
