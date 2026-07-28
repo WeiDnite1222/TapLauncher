@@ -3,8 +3,10 @@ from copy import deepcopy
 import shlex
 
 from core_lib.common.exception import VersionDataKeyNotFoundException, DependencyException
-from core_lib.game.library import parse_maven_coordinate, convert_maven_version, generate_repo_url, \
+from core_lib.game.library import parse_maven_coordinate, generate_repo_url, \
     is_complete_maven_url
+from core_lib.game.libraryx import convert_maven_version_with_extra, generate_unique_library_key, \
+    normalize_library_to_common_struct
 from core_lib.game.version_info import MOJANG_LIBRARIES_ENDPOINT
 
 logger = logging.getLogger("Launcher.CoreLib")
@@ -58,10 +60,12 @@ def find_useful_part_in_mod_version_manifest(mod_version_manifest: dict):
         "mainClass": main_class,
     }
 
+
 def merge_necessary_dependencies(inherits_libraries: list, mod_libraries: list, mod_maven_url=None,
                                  inherits_maven_url=MOJANG_LIBRARIES_ENDPOINT, default_extension="jar") -> list[dict]:
 
     inherits = {}
+    result_pre = []
     result = []
 
     # ensure below step won't modify original data
@@ -73,7 +77,7 @@ def merge_necessary_dependencies(inherits_libraries: list, mod_libraries: list, 
         source_from = lib["sourceFrom"]
         lib_group=lib["parsed"]["group"]
         lib_artifact=lib["parsed"]["artifact"]
-        lib_version=lib["parsed"]["version"]
+        lib_version=lib["parsed"]["versionRaw"]
         lib_classifier=lib["parsed"]["classifier"]
         lib_extension=lib["parsed"]["extension"]
 
@@ -111,73 +115,119 @@ def merge_necessary_dependencies(inherits_libraries: list, mod_libraries: list, 
                 "Provided inherited library does not contain key \"name\"."
             )
 
-        group, artifact, version, classifier, extension = parse_maven_coordinate(name,
-                                                                                 default_extension=default_extension)
+        group, artifact, version_raw, classifier, extension = parse_maven_coordinate(name, default_extension=default_extension)
+        ver_converted, extra = convert_maven_version_with_extra(version_raw)
+
+        if extra:
+            logger.debug("Found extra version \"{}\" for library {}".format(extra, name))
+
+        if not ver_converted:
+            raise DependencyException(
+                f"Unable to convert provided inherited library name {name}'s version {version_raw} to tuple."
+            )
+
+        lib_key = generate_unique_library_key(
+            group=group,
+            artifact=artifact,
+            classifier=classifier,
+            extension=extension,
+        )
 
         # Save into dict for next step to check if library is existing
-        if not f"{group}:{artifact}" in inherits:
-            inherits[f"{group}:{artifact}"] = library
-            inherits[f"{group}:{artifact}"]["parsed"] = {
+        if not lib_key in inherits:
+            inherits[lib_key] = library
+            inherits[lib_key]["parsed"] = {
                 "group": group,
                 "artifact": artifact,
-                "version": version,
+                "version": ver_converted,
+                "versionRaw": version_raw,
+                "versionExtra": extra,
                 "classifier": classifier,
                 "extension": extension,
+                "endpoint": inherits_maven_url
             }
-            inherits[f"{group}:{artifact}"]["sourceFrom"] = "official"
+            inherits[lib_key]["sourceFrom"] = "official"
         else:
             logger.warning("Duplicate library: {}".format(name))
 
     for mod_library in mod_libraries:
         name = mod_library.get("name", None)
-        group, artifact, version, classifier, extension = parse_maven_coordinate(name, default_extension=default_extension)
-
-        ver_converted = convert_maven_version(version)
 
         if not name:
             raise DependencyException(
                 "Provided mod library does not contain key \"name\"."
             )
 
+        group, artifact, version_raw, classifier, extension = parse_maven_coordinate(name, default_extension=default_extension)
+
+        ver_converted, extra = convert_maven_version_with_extra(version_raw)
+
+        if extra:
+            logger.debug("Found extra version \"{}\" for library {}".format(extra, name))
+
         if ver_converted is None:
             raise DependencyException(
-                "Unable to convert inherits library version {} to tuple".format(version),
+                "Unable to convert mod library version {} to tuple".format(version_raw),
             )
 
-        group, artifact, version, classifier, extension = parse_maven_coordinate(name, default_extension=default_extension)
+        group, artifact, version_raw, classifier, extension = parse_maven_coordinate(name, default_extension=default_extension)
+        lib_key = generate_unique_library_key(
+            group=group,
+            artifact=artifact,
+            classifier=classifier,
+            extension=extension,
+        )
 
         mod_library["sourceFrom"] = "mod"
         mod_library["parsed"] = {
             "group": group,
             "artifact": artifact,
-            "version": version,
+            # "version": {"raw": version, "converted": ver_converted, "extra": extra},
+            "version": ver_converted,
+            "versionRaw": version_raw,
+            "versionExtra": extra,
             "classifier": classifier,
             "extension": extension,
+            "endpoint": mod_maven_url,
         }
 
-        if f"{group}:{artifact}" in inherits:
-            found_lib = inherits.pop(f"{group}:{artifact}")
-            found_lib_ver = convert_maven_version(found_lib["parsed"]["version"], None)
+        if lib_key in inherits:
+            found_lib = inherits.pop(lib_key)
+            found_lib_ver = found_lib["parsed"]["version"]
+            found_lib_ver_extra = found_lib["parsed"]["versionExtra"]
 
             if found_lib_ver is None:
                 raise DependencyException(
-                    "Unable to convert mod library version {} to tuple".format(found_lib["version"])
+                    "Unable to convert mod library version {} to tuple".format(found_lib["versionRaw"])
                 )
 
-            if found_lib_ver > ver_converted or found_lib_ver == ver_converted:
-                result.append(found_lib)
+            if found_lib_ver > ver_converted:
+                result_pre.append(found_lib)
             elif found_lib_ver < ver_converted:
-                result.append(mod_library)
+                result_pre.append(mod_library)
+            else:
+                # Use mod loader library if extra version is existing
+                if found_lib_ver_extra == mod_library["parsed"]["versionExtra"]:
+                    result_pre.append(found_lib)
+                else:
+                    result_pre.append(mod_library)
         else:
-            result.append(mod_library)
+            result_pre.append(mod_library)
 
     # Add the remaining dependencies back to result
     for key in inherits:
         value = inherits[key]
-        result.append(value)
+        result_pre.append(value)
 
-    for library in result:
+    for library in result_pre:
+        # Cleanup
         check_lib(library)
+        library_normalized = normalize_library_to_common_struct(library, default_maven_url=library["parsed"]["endpoint"])
+
+        library_normalized.pop("parsed", None)
+        library_normalized.pop("sourceFrom", None)
+        library_normalized.pop("endpoint", None)
+        result.append(library_normalized)
 
     return result
 
@@ -239,5 +289,15 @@ def merge_manifest(inherits_version_manifest: dict, mod_version_manifest: dict, 
     mod_arguments = mod_version_manifest.get("arguments", {}) or mod_version_manifest.get("minecraftArguments", {})
 
     merged_manifest["arguments"] = merge_game_and_jvm_args(inherits_arguments, mod_arguments)
+
+    # Update version number
+    mod_id = mod_version_manifest.get("id")
+    inherits_id = inherits_version_manifest.get("id")
+
+    if mod_id:
+        merged_manifest["id"] = mod_id
+
+    if inherits_id:
+        merged_manifest["inheritsFrom"] = inherits_id
 
     return merged_manifest

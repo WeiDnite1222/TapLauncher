@@ -9,8 +9,8 @@ from core_lib.common.exception import VersionManifestFetchException, VersionData
 logger = logging.getLogger("Launcher.CoreLib")
 
 FABRIC_META_VERSION_ENDPOINT_V2 = "https://meta.fabricmc.net/v2/versions"
-FABRIC_META_LOADER_VERSION_ENDPOINT_V2 = "https://meta.fabricmc.net/v1/versions/loader/{}/"
-FABRIC_META_LOADER_MANIFEST_ENDPOINT_V2 = "https://meta.fabricmc.net//v2/versions/loader/{}/{}/profile/json"
+FABRIC_META_LOADER_VERSION_ENDPOINT_V2 = "https://meta.fabricmc.net/v2/versions/loader/{}/"
+FABRIC_META_LOADER_MANIFEST_ENDPOINT_V2 = "https://meta.fabricmc.net/v2/versions/loader/{}/{}/profile/json"
 FABRIC_MAVEN_URL = "https://maven.fabricmc.net/"
 
 def fetch_fabric_version_list(version_manifest_url: str=FABRIC_META_VERSION_ENDPOINT_V2, timeout: int=5) -> list[dict]:

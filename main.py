@@ -50,7 +50,7 @@ def main():
     logging.basicConfig(format=DEFAULT_FORMAT, datefmt=DEFAULT_DATE_FORMAT, level=level)
 
     # Start (the real) launcher
-    app = Launcher()
+    app = Launcher(logger)
     sys.exit(app.exec())
 
 

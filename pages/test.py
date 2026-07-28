@@ -1,15 +1,15 @@
 import json
-import queue
 import subprocess
 import textwrap
 import threading
 import time
 import traceback
 from pathlib import Path
+from uuid import uuid4
 
 from PySide6.QtCore import Qt, QObject, Signal, Slot
 from PySide6.QtWidgets import QPushButton, QVBoxLayout, QPlainTextEdit, \
-    QHBoxLayout, QComboBox, QMessageBox, QFileDialog, QWidget
+    QHBoxLayout, QComboBox, QWidget
 
 from core_lib.common.common import FileObject, download_multiple_files
 from core_lib.common.exception import VersionNotSelectedException, UnsupportedPlatformException, \
@@ -19,52 +19,28 @@ from core_lib.common.exception import VersionNotSelectedException, UnsupportedPl
 from core_lib.game.argument import ArgumentMappings, parse_and_generate_arguments, find_game_and_jvm_args, \
     generate_launch_command
 from core_lib.game.asset import download_assets, check_assets_exist, find_correct_assets_dir
-from core_lib.game.library import generate_classpath, download_full_libraries, check_full_libraries_exists
+from core_lib.game.library_core import generate_classpath, download_full_libraries, check_full_libraries_exists
 
 from core_lib.game.version_info import (find_useful_part_in_specific_version_manifest, \
                                         get_all_versions, get_available_version_types, \
                                         fetch_and_save_version_manifest, get_specific_version_manifest_url_and_hash,
                                         download_core_file)
-from core_lib.qt import messagebox
 from core_lib.qt.hack import is_main_thread
-from core_lib.qt.messagebox import ask_yes_no_with_plain_text
+from core_lib.qt.progress_dialog import ProgressDialog
 from core_lib.runtime.java import find_java_installations
+from manager.widgets import SelectPathRequest, AskForRequest
 
 MAX_DOWNLOAD_ATTEMPTS = 3
 
 
-class AskForRequest:
-    def __init__(self, title, message):
-        self.title = title
-        self.message = message
-        self.result_queue = queue.Queue(maxsize=1)
-        self.wait_event = threading.Event()
-
-        self.details = None # Set this if flag use_plain_text is enabled
-
-        # flags
-        self.use_plain_text = True
-
-    def wait(self, timeout: int | None = 10):
-        return self.wait_event.wait(timeout)
-
-    def result(self):
-        try:
-            return self.result_queue.get_nowait()
-        except queue.Empty:
-            return None
-
-class SelectPathRequest(AskForRequest):
-    def __init__(self, title, message, filter_raw=None):
-        super().__init__(title, message)
-        self.filter = filter_raw
-
 
 class TestPage(QWidget):
-    def __init__(self, app, parent):
+    def __init__(self, /, app, parent, widget_manager):
         super().__init__(parent)
         self.app = app
         self.parent = parent
+        self.widget_mgr = widget_manager
+
         self.resize(800, 600)
         self.setWindowFlags(self.windowFlags() | Qt.WindowType.WindowMaximizeButtonHint)
 
@@ -138,187 +114,63 @@ class TestPage(QWidget):
             }          
             """))
 
-        # Bind signal functions
-        self.download_signal = self.DownloadSignal(self)
-        self.widget_signal = self.WidgetSignal(self)
+        self.signals = self.PageSignals(self)
 
-        self.download_signal.log.connect(
+        # Bind signal functions
+        self.widget_mgr.download_signal.log.connect(
             self.output.appendPlainText
         )
 
-        self.download_signal.finished.connect(
-            lambda count: self.output.appendPlainText(
-                f"Download finished, failed: {count}"
-            )
-        )
+        # self.widget_mgr.download_signal.finished.connect(
+        #     lambda count: self.output.appendPlainText(
+        #         f"Download finished, failed: {count}"
+        #     )
+        # )
+        #
+        # self.widget_mgr.download_signal.progress.connect(
+        #     lambda name, progress: self.output.setPlainText(
+        #         f"Downloading {name}: {self.get_progress(progress)}"
+        #     )
+        # )
 
-        self.download_signal.progress.connect(
-            lambda name, progress: self.output.setPlainText(
-                f"Downloading {name}: {self.get_progress(progress)}"
-            )
-        )
-
-        self.widget_signal.clean_ver_types_dropdown.connect(
+        self.signals.clean_ver_types_dropdown.connect(
             self.ver_type_dropdown.clear
         )
 
-        self.widget_signal.update_types_dropdown.connect(
+        self.signals.update_types_dropdown.connect(
             lambda types: self.update_type_dropdown(types)
         )
 
-        self.widget_signal.clean_vers_dropdown.connect(
+        self.signals.clean_vers_dropdown.connect(
             self.ver_dropdown.clear
         )
 
-        self.widget_signal.update_vers_dropdown.connect(
+        self.signals.update_vers_dropdown.connect(
             lambda vers: self.update_version_dropdown(vers)
         )
 
-        self.widget_signal.show_error_message.connect(
-            lambda msg: messagebox.error(
-                self.parent,
-                "Error",
-                message=msg
-            )
-        )
-
-        self.widget_signal.show_and_print_error_message.connect(
-            self.show_and_print_error
-        )
-
-        self.widget_signal.show_warning_message.connect(
-            lambda msg: messagebox.warning(
-                self.parent,
-                "Warning",
-                message=msg
-            )
-        )
-
-        self.widget_signal.show_info_message.connect(
-            lambda msg: messagebox.info(
-                self.parent,
-                "Info",
-                message=msg
-            )
-        )
-
-        self.widget_signal.enable_widget.connect(
-            lambda widget: widget.setEnabled(True)
-        )
-
-        self.widget_signal.disable_widget.connect(
-            lambda widget: widget.setDisabled(True)
-        )
-
-        self.widget_signal.askyesno.connect(
-            self.ask_request
-        )
-
-        self.widget_signal.ask_for_path.connect(
-            self.ask_for_path
-        )
-
-        self.widget_signal.get_selected_ver.connect(
+        self.signals.get_selected_ver.connect(
             self.get_selected_ver
         )
 
-        self.widget_signal.get_selected_type.connect(
+        self.signals.get_selected_type.connect(
             self.get_selected_type
         )
 
-        self.widget_signal.clean_output.connect(
+        self.signals.clean_output.connect(
             lambda : self.output.clear()
         )
 
         self.load_all_types()
 
-    class DownloadSignal(QObject):
-        log = Signal(str)
-        finished = Signal(int)
-        failed = Signal(str)
-        progress = Signal(str, float)
-
-    class WidgetSignal(QObject):
+    class PageSignals(QObject):
         clean_ver_types_dropdown = Signal()
         clean_vers_dropdown = Signal()
         update_vers_dropdown = Signal(list)
         update_types_dropdown = Signal(list)
-        show_error_message = Signal(str)
-        show_and_print_error_message = Signal(dict)
-        show_warning_message = Signal(str)
-        show_info_message = Signal(str)
-        enable_widget = Signal(object)
-        disable_widget = Signal(object)
-        askyesno = Signal(object)
-        ask_for_path = Signal(object)
         get_selected_ver = Signal(dict)
         get_selected_type = Signal(dict)
         clean_output = Signal()
-
-    @Slot(object)
-    def ask_request(self, context: AskForRequest):
-        if not context.use_plain_text:
-            msg = QMessageBox.question(
-                self,
-                context.title,
-                context.message,
-                QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
-                QMessageBox.StandardButton.Yes,
-            )
-            result = msg == QMessageBox.StandardButton.Yes
-        else:
-            result = ask_yes_no_with_plain_text(
-                self,
-                context.title,
-                context.message,
-                context.details,
-            )
-
-        if result:
-            context.result_queue.put(True)
-        else:
-            context.result_queue.put(False)
-
-        context.wait_event.set()
-
-    @Slot(object)
-    def ask_request(self, context: AskForRequest):
-        if not context.use_plain_text:
-            msg = QMessageBox.question(
-                self,
-                context.title,
-                context.message,
-                QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
-                QMessageBox.StandardButton.Yes,
-            )
-            result = msg == QMessageBox.StandardButton.Yes
-        else:
-            result = ask_yes_no_with_plain_text(
-                self,
-                context.title,
-                context.message,
-                context.details,
-            )
-
-        if result:
-            context.result_queue.put(True)
-        else:
-            context.result_queue.put(False)
-
-        context.wait_event.set()
-
-    @Slot(object)
-    def ask_for_path(self, context: SelectPathRequest):
-        path, _ = QFileDialog.getOpenFileName(
-            self,
-            context.title,
-            "",
-            context.filter,
-        )
-
-        context.result_queue.put(path)
-
-        context.wait_event.set()
 
     @Slot(dict)
     def get_selected_ver(self, context: dict):
@@ -333,25 +185,6 @@ class TestPage(QWidget):
         event = context.get("event", None)
         if isinstance(event, threading.Event):
             event.set()
-
-    @Slot(dict)
-    def show_and_print_error(self, context: dict):
-        error = context.get("error", None)
-        title = context.get("title", "Error")
-        message = context.get("message", "No content")
-
-        if isinstance(error, list):
-            self.app.logger.error("".join(error))
-        elif isinstance(error, str):
-            self.app.logger.error(error)
-        elif isinstance(error, Exception):
-            self.app.logger.exception(error)
-
-        messagebox.error(
-            self.parent,
-            title,
-            message=message
-        )
 
     @staticmethod
     def get_progress(value):
@@ -393,7 +226,7 @@ class TestPage(QWidget):
             context = {
                 "event": event,
             }
-            self.widget_signal.get_selected_ver.emit(context)
+            self.signals.get_selected_ver.emit(context)
 
             if not event.wait(10):
                 raise VersionNotSelectedException(
@@ -413,7 +246,7 @@ class TestPage(QWidget):
             ver = self._get_selected_version_unsafe()
             return ver
         except VersionNotSelectedException as e:
-            self.widget_signal.show_error_message.emit(
+            self.widget_mgr.signal.show_error_message.emit(
                 "Select a version before continuing.\n"
                 "Details: {}".format(e.user_message)
             )
@@ -452,7 +285,7 @@ class TestPage(QWidget):
                     """)
             self.output.setPlainText(content)
         except Exception as e:
-            self.widget_signal.show_and_print_error_message.emit(
+            self.widget_mgr.signal.show_and_print_error_message.emit(
                 {
                     "error": traceback.format_exception(e),
                     "title": "Test Error",
@@ -470,7 +303,7 @@ class TestPage(QWidget):
         ver = self.get_selected_version()
 
         if not ver:
-            self.widget_signal.enable_widget.emit(self.button_2)
+            self.widget_mgr.signal.enable_widget.emit(self.button_2)
             return
 
         thread = threading.Thread(
@@ -488,7 +321,7 @@ class TestPage(QWidget):
         ver = self.get_selected_version()
 
         if not ver:
-            self.widget_signal.enable_widget.emit(self.button_3)
+            self.widget_mgr.signal.enable_widget.emit(self.button_3)
             return
 
         thread = threading.Thread(
@@ -506,7 +339,7 @@ class TestPage(QWidget):
         ver = self.get_selected_version()
 
         if not ver:
-            self.widget_signal.enable_widget.emit(self.button_5)
+            self.widget_mgr.signal.enable_widget.emit(self.button_5)
             return
 
         thread = threading.Thread(
@@ -524,7 +357,7 @@ class TestPage(QWidget):
         ver = self.get_selected_version()
 
         if not ver:
-            self.widget_signal.enable_widget.emit(self.button_6)
+            self.widget_mgr.signal.enable_widget.emit(self.button_6)
             return
 
         thread = threading.Thread(
@@ -542,7 +375,7 @@ class TestPage(QWidget):
         ver = self.get_selected_version()
 
         if not ver:
-            self.widget_signal.enable_widget.emit(self.button_7)
+            self.widget_mgr.signal.enable_widget.emit(self.button_7)
             return
 
         thread = threading.Thread(
@@ -561,7 +394,7 @@ class TestPage(QWidget):
             args=(ver_type,)
         )
         thread.start()
-        self.download_signal.log.emit("Loading all versions...")
+        self.widget_mgr.download_signal.log.emit("Loading all versions...")
 
     def load_all_types(self):
         thread = threading.Thread(
@@ -569,21 +402,21 @@ class TestPage(QWidget):
             daemon=True
         )
         thread.start()
-        self.download_signal.log.emit("Loading all types...")
+        self.widget_mgr.download_signal.log.emit("Loading all types...")
 
     # All functions below that must be run in background thread
     def _load_all_types(self):
-        self.widget_signal.clean_ver_types_dropdown.emit()
+        self.signals.clean_ver_types_dropdown.emit()
 
         data = self.get_cached_version_manifest()
         if not data:
             return
 
         ver_types = get_available_version_types(data)
-        self.widget_signal.update_types_dropdown.emit(ver_types)
+        self.signals.update_types_dropdown.emit(ver_types)
 
     def _load_all_version(self, ver_type):
-        self.widget_signal.clean_vers_dropdown.emit()
+        self.signals.clean_vers_dropdown.emit()
 
         data = self.get_cached_version_manifest()
         if not data:
@@ -593,7 +426,7 @@ class TestPage(QWidget):
             data,
             specified_type=ver_type
         )
-        self.widget_signal.update_vers_dropdown.emit(vers)
+        self.signals.update_vers_dropdown.emit(vers)
 
     #
     # ============ Version Data Cache ============
@@ -620,15 +453,15 @@ class TestPage(QWidget):
         try:
             data = fetch_and_save_version_manifest(path, target_version=specified_ver, root_manifest=root_manifest)
         except VersionManifestFetchException as e:
-            self.widget_signal.show_error_message.emit(
+            self.widget_mgr.signal.show_error_message.emit(
                 e.user_message,
             )
         except VersionManifestSaveException as e:
-            self.widget_signal.show_error_message.emit(
+            self.widget_mgr.signal.show_error_message.emit(
                 e.user_message,
             )
         except Exception as e:
-            self.widget_signal.show_and_print_error_message.emit(
+            self.widget_mgr.signal.show_and_print_error_message.emit(
                 {
                     "error": traceback.format_exception(e),
                     "title": "Cache Error",
@@ -641,7 +474,7 @@ class TestPage(QWidget):
     def _read_cached_version_manifest(self, specified_ver: str = None) -> dict | None:
         path = self.switch_between_specific_path(specified_ver)
         if not path.exists():
-            self.widget_signal.show_error_message.emit(
+            self.widget_mgr.signal.show_error_message.emit(
                 "Version manifest missing after check. Please try again later.",
             )
             return None
@@ -650,7 +483,7 @@ class TestPage(QWidget):
             version_manifest = json.loads(path.read_text())
             return version_manifest
         except Exception as e:
-            self.widget_signal.show_and_print_error_message.emit(
+            self.widget_mgr.signal.show_and_print_error_message.emit(
                 {
                     "error": traceback.format_exception(e),
                     "title": "Cache Error",
@@ -674,7 +507,7 @@ class TestPage(QWidget):
             try:
                 _, sha1 = get_specific_version_manifest_url_and_hash(root_manifest, specified_ver)
             except NoSpecifiedVersionKeyException as e:
-                self.widget_signal.show_error_message.emit(
+                self.widget_mgr.signal.show_error_message.emit(
                     f"Version {specified_ver} does not exist in version manifest.\n{e.user_message}"
                 )
                 return None
@@ -701,27 +534,59 @@ class TestPage(QWidget):
 
         return data
 
+    def create_download_progress_callback(self, progress_title: str):
+        task_id = uuid4().hex
+        signals = self.widget_mgr.download_signal
+
+        signals.started.emit(task_id, progress_title)
+
+        def callback(name, percent):
+            signals.progress.emit(
+                task_id,
+                f"Downloading {name}",
+                percent,
+            )
+
+        return callback, task_id
+
     #
     # ============ Game Files ============
     #
     # INFO: All are not in main thread
     def _download_client(self, ver: str):
+        callback, task_id = self.create_download_progress_callback(f"Downloading {ver} client")
         try:
             ver_data = self.get_cached_version_manifest(ver)
 
             if not ver_data:
+                self.widget_mgr.download_signal.failed.emit(
+                    task_id,
+                    "Version manifest is unavailable.",
+                )
                 return
 
             client_dest = Path(self.app.work_dir, "versions", ver, f"{ver}.jar")
-            download_core_file(ver_data, client_dest, progress_callback=self.download_signal.progress.emit,
-                               raise_for_null_hash=True)
-            self.download_signal.log.emit(f"Downloaded {ver} client to {client_dest}")
+            download_core_file(
+                ver_data,
+                client_dest,
+                progress_callback=callback,
+                raise_for_null_hash=True,
+            )
+            self.widget_mgr.download_signal.log.emit(f"Downloaded {ver} client to {client_dest}")
         except DownloadException as e:
-            self.widget_signal.show_error_message.emit(
+            self.widget_mgr.download_signal.failed.emit(
+                task_id,
+                e.user_message,
+            )
+            self.widget_mgr.signal.show_error_message.emit(
                 "Unable to download client while downloading it: {}".format(e.user_message),
             )
         except VersionDataKeyNotFoundException as e:
-            self.widget_signal.show_and_print_error_message.emit(
+            self.widget_mgr.download_signal.failed.emit(
+                task_id,
+                e.user_message,
+            )
+            self.widget_mgr.signal.show_and_print_error_message.emit(
                 {
                     "error": traceback.format_exception(e),
                     "title": "Fetch Error",
@@ -729,23 +594,34 @@ class TestPage(QWidget):
                 }
             )
         except Exception as e:
-            self.widget_signal.show_and_print_error_message.emit(
+            self.widget_mgr.download_signal.failed.emit(
+                task_id,
+                str(e),
+            )
+            self.widget_mgr.signal.show_and_print_error_message.emit(
                 {
                     "error": traceback.format_exception(e),
                     "title": "Download Error",
                     "message": "Unable to download client, an unexpected error occurred."
                 }
             )
+        else:
+            self.widget_mgr.download_signal.finished.emit(task_id)
         finally:
-            self.widget_signal.enable_widget.emit(self.button_2)
+            self.widget_mgr.signal.enable_widget.emit(self.button_2)
 
     def _download_libraries(self, ver: str):
+        callback, task_id = self.create_download_progress_callback(f"Downloading libraries for version {ver}")
         try:
-            self.widget_signal.clean_output.emit()
+            self.signals.clean_output.emit()
 
             ver_data = self.get_cached_version_manifest(ver)
 
             if not ver_data:
+                self.widget_mgr.download_signal.failed.emit(
+                    task_id,
+                    "Version manifest is unavailable.",
+                )
                 return
 
             libraries_dir = Path(self.app.work_dir, "libraries")
@@ -757,90 +633,136 @@ class TestPage(QWidget):
                 ver_data,
                 libraries_dir,
                 natives_dest,
-                progress_callback=self.download_signal.progress.emit,
+                progress_callback=callback,
                 redownload_callback=self.redownload_files
             )
-            self.download_signal.log.emit(
+            self.widget_mgr.download_signal.log.emit(
                 "All libraries downloaded successfully."
             )
         except DependencyException as e:
-            self.widget_signal.show_error_message.emit(
+            self.widget_mgr.download_signal.failed.emit(
+                task_id,
+                e.user_message,
+            )
+            self.widget_mgr.signal.show_error_message.emit(
                 "Unable to collect library artifacts.\n"
                 f"{e.user_message}"
             )
         except DownloadException as e:
-            self.widget_signal.show_error_message.emit(
+            self.widget_mgr.download_signal.failed.emit(
+                task_id,
+                e.user_message,
+            )
+
+            self.widget_mgr.signal.show_error_message.emit(
                 "Unable to collect library artifacts. An download error occurred:\n"
                 f"{e.user_message}"
             )
         except UnsupportedPlatformException as e:
-            self.widget_signal.show_error_message.emit(
+            self.widget_mgr.download_signal.failed.emit(
+                task_id,
+                e.user_message,
+            )
+            self.widget_mgr.signal.show_error_message.emit(
                 "Unable to collect native artifacts.\n"
                 f"{e.user_message}"
             )
         except NativeResolveException as e:
-            self.widget_signal.show_error_message.emit(
+            self.widget_mgr.download_signal.failed.emit(
+                task_id,
+                e.user_message,
+            )
+            self.widget_mgr.signal.show_error_message.emit(
                 "Unable to collect native artifacts.\n"
                 f"{e.user_message}"
             )
         except Exception as e:
-            self.widget_signal.show_and_print_error_message.emit(
+            self.widget_mgr.download_signal.failed.emit(
+                task_id,
+                str(e),
+            )
+            self.widget_mgr.signal.show_and_print_error_message.emit(
                 {
                     "error": traceback.format_exception(e),
                     "title": "Download Error",
                     "message": "Unable to collect library artifacts. An unknown error occurred."
                 }
             )
+        else:
+            self.widget_mgr.download_signal.finished.emit(task_id)
         finally:
-            self.widget_signal.enable_widget.emit(self.button_3)
+            self.widget_mgr.signal.enable_widget.emit(self.button_3)
 
     def _download_assets(self, ver: str):
+        callback, task_id = self.create_download_progress_callback(f"Downloading assets for version {ver}")
         try:
-            self.widget_signal.clean_output.emit()
+            self.signals.clean_output.emit()
 
             ver_data = self.get_cached_version_manifest(ver)
 
             if not ver_data:
+                self.widget_mgr.download_signal.failed.emit(
+                    task_id,
+                    "Version manifest is unavailable.",
+                )
                 return
 
             assets_dir = Path(self.app.work_dir, "assets")
 
             fails = download_assets(ver_data, assets_dir,
                                     no_hash_check=True,
-                                    progress_callback=self.download_signal.progress.emit,
+                                    progress_callback=callback,
                                     launcher_root=self.app.work_dir)
 
             if fails:
-                self.widget_signal.show_warning_message.emit(
+                self.widget_mgr.download_signal.failed.emit(
+                    task_id,
+                    f"{len(fails)} asset files failed to download.",
+                )
+                self.widget_mgr.signal.show_warning_message.emit(
                     "Some assets were not downloaded. Although is not necessary for launching game."
                     " But it may cause some texture issue when you playing. (Such as missing textures)"
                 )
             else:
-                self.download_signal.log.emit(
+                self.widget_mgr.download_signal.log.emit(
                     "All assets downloaded successfully."
                 )
         except AssetManifestFetchException as e:
-            self.widget_signal.show_error_message.emit(
+            self.widget_mgr.download_signal.failed.emit(
+                task_id,
+                e.user_message,
+            )
+            self.widget_mgr.signal.show_error_message.emit(
                 f"Unable to fetch asset manifest.\n{e.user_message}"
             )
         except AssetManifestSaveException as e:
-            self.widget_signal.show_error_message.emit(
+            self.widget_mgr.download_signal.failed.emit(
+                task_id,
+                e.user_message,
+            )
+            self.widget_mgr.signal.show_error_message.emit(
                 f"Unable to save asset manifest.\n{e.user_message}"
             )
         except AssetDataKeyNotFoundException as e:
-            self.widget_signal.show_error_message.emit(
+            self.widget_mgr.download_signal.failed.emit(
+                task_id,
+                e.user_message,
+            )
+            self.widget_mgr.signal.show_error_message.emit(
                 f"Unable to collect assets.\n{e.user_message}"
             )
         except Exception as e:
-            self.widget_signal.show_and_print_error_message.emit(
+            self.widget_mgr.signal.show_and_print_error_message.emit(
                 {
                     "error": traceback.format_exception(e),
                     "title": "Download Error",
                     "message": "Unable to download assets. An unknown error occurred."
                 }
             )
+        else:
+            self.widget_mgr.download_signal.finished.emit(task_id)
         finally:
-            self.widget_signal.enable_widget.emit(self.button_5)
+            self.widget_mgr.signal.enable_widget.emit(self.button_5)
 
     def _parse_argument(self, ver):
         try:
@@ -854,7 +776,7 @@ class TestPage(QWidget):
             target_args = new_args if new_args else old_args
 
             if not target_args:
-                self.widget_signal.show_error_message.emit(
+                self.widget_mgr.signal.show_error_message.emit(
                     "Unable to parse arguments because data are invalid.\n"
                 )
                 return
@@ -869,10 +791,10 @@ class TestPage(QWidget):
                 game_args,
                 arg_maps
             )
-            self.download_signal.log.emit(f"Parsed jvm arguments: \n{parsed_jvm_args}\n{" ".join(parsed_jvm_args)}")
-            self.download_signal.log.emit(f"Parsed game arguments: \n{parsed_game_args}\n{" ".join(parsed_game_args)}")
+            self.widget_mgr.download_signal.log.emit(f"Parsed jvm arguments: \n{parsed_jvm_args}\n{" ".join(parsed_jvm_args)}")
+            self.widget_mgr.download_signal.log.emit(f"Parsed game arguments: \n{parsed_game_args}\n{" ".join(parsed_game_args)}")
         except Exception as e:
-            self.widget_signal.show_and_print_error_message.emit(
+            self.widget_mgr.signal.show_and_print_error_message.emit(
                 {
                     "error": traceback.format_exception(e),
                     "title": "Parse Error",
@@ -880,7 +802,7 @@ class TestPage(QWidget):
                 }
             )
         finally:
-            self.widget_signal.enable_widget.emit(self.button_6)
+            self.widget_mgr.signal.enable_widget.emit(self.button_6)
 
     def _launch_offline_game(self, ver):
         """
@@ -927,10 +849,23 @@ class TestPage(QWidget):
             current_status = 3
             default_assets_dir = Path(self.app.work_dir, "assets")
             if not check_assets_exist(ver_data, default_assets_dir, launcher_root=self.app.work_dir):
-                download_assets(ver_data, default_assets_dir,
-                                no_hash_check=True,
-                                progress_callback=self.download_signal.progress.emit,
-                                launcher_root=self.app.work_dir)
+                callback, task_id = self.create_download_progress_callback(
+                    "Downloading missing assets"
+                )
+
+                try:
+                    download_assets(
+                        ver_data,
+                        default_assets_dir,
+                        no_hash_check=True,
+                        progress_callback=callback,
+                        launcher_root=self.app.work_dir,
+                    )
+                except Exception as e:
+                    self.widget_mgr.download_signal.failed.emit(task_id, str(e))
+                    raise
+                else:
+                    self.widget_mgr.download_signal.finished.emit(task_id)
 
             assets_dir = find_correct_assets_dir(asset_id, default_assets_dir, self.app.work_dir)
 
@@ -964,7 +899,7 @@ class TestPage(QWidget):
             target_args = arguments if arguments else old_args
 
             if not target_args:
-                self.widget_signal.show_error_message.emit(
+                self.widget_mgr.signal.show_error_message.emit(
                     "Unable to parse arguments because data are invalid.\n"
                 )
                 return
@@ -983,10 +918,10 @@ class TestPage(QWidget):
                     filter_raw="Java executable (java.exe javaw.exe);;All files (*)"
                 )
 
-                self.widget_signal.ask_for_path.emit(request)
+                self.widget_mgr.signal.ask_for_path.emit(request)
 
                 if not request.wait(120):
-                    self.widget_signal.show_error_message.emit(
+                    self.widget_mgr.signal.show_error_message.emit(
                         "Timed out while waiting for Java executable selection."
                     )
                     return
@@ -994,9 +929,9 @@ class TestPage(QWidget):
                 java_path = request.result()
 
                 if java_path:
-                    self.download_signal.log.emit(f"Use specified java executable path: {java_path}")
+                    self.widget_mgr.download_signal.log.emit(f"Use specified java executable path: {java_path}")
                 else:
-                    self.download_signal.log.emit("Use system environment java.")
+                    self.widget_mgr.download_signal.log.emit("Use system environment java.")
                     java_path = "java"
 
             # Finally, generate launch command
@@ -1007,7 +942,7 @@ class TestPage(QWidget):
                 full_args=target_args,
             )
 
-            self.download_signal.log.emit(f"Launch command: {cmd}")
+            self.widget_mgr.download_signal.log.emit(f"Launch command: {cmd}")
 
             # run it
             process = subprocess.Popen(
@@ -1021,9 +956,9 @@ class TestPage(QWidget):
             )
 
             for line in process.stdout:
-                self.download_signal.log.emit(line.rstrip())
+                self.widget_mgr.download_signal.log.emit(line.rstrip())
         except Exception as e:
-            self.widget_signal.show_and_print_error_message.emit(
+            self.widget_mgr.signal.show_and_print_error_message.emit(
                 {
                     "error": traceback.format_exception(e),
                     "title": "Launch Error",
@@ -1031,7 +966,7 @@ class TestPage(QWidget):
                 }
             )
         finally:
-            self.widget_signal.enable_widget.emit(self.button_7)
+            self.widget_mgr.signal.enable_widget.emit(self.button_7)
 
     def redownload_files(self, files: list[FileObject]) -> tuple[bool, list[FileObject]]:
         if not files:
@@ -1045,10 +980,10 @@ class TestPage(QWidget):
         request = AskForRequest("Redownload", message)
         request.details = "\n".join(file.posix_path for file in files)
 
-        self.widget_signal.askyesno.emit(request)
+        self.widget_mgr.signal.askyesno.emit(request)
 
         if not request.wait(60):
-            self.widget_signal.show_error_message.emit(
+            self.widget_mgr.signal.show_error_message.emit(
                 "Timed out while waiting for confirmation. Please try again."
             )
             return False, files
@@ -1061,26 +996,34 @@ class TestPage(QWidget):
         # copy
         pending = list(files)
 
+        callback, task_id = self.create_download_progress_callback(f"Redownloading {len(files)} files.")
+
         for retry_time in range(1, MAX_DOWNLOAD_ATTEMPTS + 1):
             if not pending:
                 return True, []
 
-            self.download_signal.log.emit(f"Attempt {retry_time}/{len(pending)}")
+            self.widget_mgr.download_signal.log.emit(f"Attempt {retry_time}/{len(pending)}")
 
-            fails, successes = download_multiple_files(pending, progress_callback=self.download_signal.progress.emit)
+            fails, successes = download_multiple_files(pending,
+                                                       progress_callback=callback)
 
             for file in successes:
-                self.download_signal.log.emit(f"Downloaded {file.posix_path}.")
+                self.widget_mgr.download_signal.log.emit(f"Downloaded {file.posix_path}.")
 
             if fails:
                 pending = fails
             else:
+                self.widget_mgr.download_signal.finished.emit(task_id)
                 pending = []
 
         if not pending:
             return True, []
 
         failed_list = "\n".join(file.posix_path for file in pending)
+        self.widget_mgr.download_signal.failed.emit(
+            task_id,
+            f"{len(pending)} files still failed after retries.",
+        )
         self.app.logger.warning(
             "Unable to download these files:\n{}".format(failed_list)
         )
@@ -1097,7 +1040,7 @@ class TestPage(QWidget):
     def _find_and_save_jvm_search_result(self):
         installations, errors = find_java_installations()
         if not installations:
-            self.widget_signal.show_warning_message.emit(
+            self.widget_mgr.signal.show_warning_message.emit(
                 "There are no Java installations available in you system.\n"
             )
             return []
@@ -1109,7 +1052,7 @@ class TestPage(QWidget):
             request.details = "\n".join(path.as_posix() for path in errors)
             request.use_plain_text = True
 
-            self.widget_signal.askyesno.emit(request)
+            self.widget_mgr.signal.askyesno.emit(request)
 
         self.jvm_settings_path.parent.mkdir(parents=True, exist_ok=True)
 
@@ -1119,7 +1062,7 @@ class TestPage(QWidget):
 
             return installations
         except Exception as e:
-            self.widget_signal.show_and_print_error_message.emit(
+            self.widget_mgr.signal.show_and_print_error_message.emit(
                 {
                     "error": traceback.format_exception(e),
                     "title": "Settings Error",
@@ -1131,7 +1074,7 @@ class TestPage(QWidget):
         try:
             return json.loads(self.jvm_settings_path.read_text())
         except Exception as e:
-            self.widget_signal.show_and_print_error_message.emit(
+            self.widget_mgr.signal.show_and_print_error_message.emit(
                 {
                     "error": traceback.format_exception(e),
                     "title": "Settings Error",
@@ -1171,7 +1114,7 @@ class TestPage(QWidget):
                 return executable
 
         if not no_error:
-            self.widget_signal.show_error_message.emit(
+            self.widget_mgr.signal.show_error_message.emit(
                 "No Java executable found for major version {}.".format(major_version)
             )
 

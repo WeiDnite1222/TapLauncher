@@ -1,12 +1,15 @@
+import json
 import logging
 import re
 import shlex
 
+from core_lib.common.common import get_platform_info
 from core_lib.game.library import get_natives_platform_info
 
 logger = logging.getLogger("Launcher.CoreLib")
 
-def is_argument_allowed(argument: dict | str, allow_features: dict | None=None) -> bool:
+
+def is_argument_allowed(argument: dict | str, allow_features: dict | None = None) -> bool:
     """
     Check if argument is allowed or not.
     :param argument:
@@ -22,7 +25,8 @@ def is_argument_allowed(argument: dict | str, allow_features: dict | None=None) 
 
     rules = argument.get('rules', {})
 
-    _, platform_rule_name, _ = get_natives_platform_info()
+    _, platform_rule_name, platform_arch_type = get_natives_platform_info()
+    _, _, platform_version = get_platform_info()
 
     allowed = False
 
@@ -30,33 +34,52 @@ def is_argument_allowed(argument: dict | str, allow_features: dict | None=None) 
         return True
 
     for rule in rules:
-        rule_action = rule.get("action", None)
-        os_section = rule.get("os", {})
-        rule_os = os_section.get("name", None)
-        features_rule = rule.get("features", None)
+        if not isinstance(rule, dict):
+            logger.warning("Ignoring invalid argument rule: {}".format(rule))
+            continue
 
+        rule_action = rule.get("action", None)
+        os_rule = rule.get("os") or {}
+        rule_os = os_rule.get("name", None)
+        feature_rule = rule.get("features") or {}
+        rule_arch = os_rule.get("arch")
+        rule_version = os_rule.get("version")
+
+        # Check platform
         if rule_os is not None and platform_rule_name != rule_os:
             continue
 
-        matched = True
-
-        # Check feature dict
-        if features_rule:
-            for key, expected in features_rule.items():
-                if allow_features.get(key, False) != expected:
-                    matched = False
-                    break
-
-        if not matched:
+        # Check architecture
+        if rule_arch is not None and rule_arch != platform_arch_type:
             continue
 
+        # Check platform version
+        if rule_version is not None:
+            try:
+                if re.search(
+                        rule_version,
+                        str(platform_version),
+                ) is None:
+                    continue
+            except re.error as exc:
+                logger.warning(
+                    "Unsupported argument OS version regex %r: %s",
+                    rule_version,
+                    exc,
+                )
+                continue
+
+
+        # Check feature rule
+        if any(allow_features.get(key, False) != expected for key, expected in feature_rule.items()):
+            continue
 
         if rule_action == "allow":
             allowed = True
         elif rule_action == "disallow":
             allowed = False
         else:
-            logger.warning(f"Unknown action {rule_action}\n")
+            logger.warning(f"Unknown argument rule action {rule_action}\n")
 
     return allowed
 
@@ -66,6 +89,7 @@ def replace_placeholders(argument, placeholders: dict) -> str:
             argument = argument.replace("${" + key + "}", "" if value is None else str(value))
 
     return argument
+
 
 class ArgumentMappings:
     def __init__(self, player_name="Player", version_name="unknown",
@@ -87,8 +111,15 @@ class ArgumentMappings:
         self.auth_xuid = auth_xuid
         self.user_type = user_type
         self.user_properties = user_properties
-        if not isinstance(user_properties, dict):
-            self.user_properties = {}
+        if isinstance(user_properties, dict):
+            self.user_properties = json.dumps(
+                user_properties,
+                separators=(",", ":"),
+            )
+        else:
+            if user_properties is not None:
+                logger.warning(f"User properties should be a dictionary.")
+            self.user_properties = "{}"
         self.version_type = version_type
         self.natives_directory = natives_directory
         self.launcher_name = launcher_name
@@ -122,6 +153,7 @@ class ArgumentMappings:
             "library_directory": self.library_directory
         }
 
+
 def convert_argument_to_multiple_string(argument: str | dict) -> list[str]:
     if isinstance(argument, str):
         return [argument]
@@ -130,11 +162,12 @@ def convert_argument_to_multiple_string(argument: str | dict) -> list[str]:
         value = argument.get("value", None)
 
         if isinstance(value, list):
-            return [str(item) for item in value] # ensure all item are string
+            return [str(item) for item in value]  # ensure all item are string
         elif isinstance(value, str):
             return [value]
 
     raise TypeError("Argument must be of type str or dict")
+
 
 def find_game_and_jvm_args(arguments: dict | str) -> tuple[list, list]:
     game_args = []
@@ -160,10 +193,12 @@ def find_game_and_jvm_args(arguments: dict | str) -> tuple[list, list]:
 
     return game_args, jvm_args
 
+
 REMAPPING_ARGUMENTS = {
     # For some (I don't know) reason, in 26.2, Mojang include some
     "-Djava.library.path=${natives_directory}/java": "-Djava.library.path=${natives_directory}"
 }
+
 
 def hard_remapping_special_arguments(argument: str) -> str:
     for arg in REMAPPING_ARGUMENTS:
@@ -174,7 +209,9 @@ def hard_remapping_special_arguments(argument: str) -> str:
 
     return argument
 
-def parse_and_generate_arguments(arguments: list | str, mappings: ArgumentMappings, features: dict | None=None) -> list[str]:
+
+def parse_and_generate_arguments(arguments: list | str, mappings: ArgumentMappings, features: dict | None = None) -> \
+list[str]:
     if features is None:
         features = {}
 
@@ -204,37 +241,58 @@ def parse_and_generate_arguments(arguments: list | str, mappings: ArgumentMappin
     return parsed_arguments
 
 
+def append_missing_necessary_jvm_arguments(arguments: list, arg_maps: ArgumentMappings) -> list[str]:
+    result = []
+    has_classpath = any(
+        argument in ("-cp", "-classpath", "--class-path")
+        for argument in arguments
+    )
+
+    has_native_path = any(
+        argument.startswith("-Djava.library.path=")
+        for argument in arguments
+    )
+
+    if not has_native_path:
+        result.append(f"-Djava.library.path={arg_maps.natives_directory}")
+
+    if not has_classpath:
+        result.extend(["-cp", arg_maps.classpath])
+
+    result.extend(arguments)
+
+    return result
+
+
 def generate_launch_command(arg_maps: ArgumentMappings, main_class: str, java_path: str, full_args: dict | str
-                            ) -> list[str]:
+                            , features: dict | None = None) -> list[str]:
     cmd = [java_path]
     game_args, jvm_args = find_game_and_jvm_args(full_args)
     parsed_jvm_args = parse_and_generate_arguments(
         jvm_args,
-        arg_maps
+        arg_maps,
+        features=features
     )
     parsed_game_args = parse_and_generate_arguments(
         game_args,
-        arg_maps
+        arg_maps,
+        features=features
     )
 
     # Legacy Minecraft don't have jvm arguments exist in the version library. We need to generate by ourselves
-    if len(parsed_jvm_args) == 0:
-        cmd.extend([
-            f"-Djava.library.path={arg_maps.natives_directory}",
-            "-cp",
-            arg_maps.classpath,
-        ])
-    else:
-        cmd.extend(parsed_jvm_args)
+    parsed_jvm_args = append_missing_necessary_jvm_arguments(parsed_jvm_args, arg_maps)
 
+    cmd.extend(parsed_jvm_args)
     cmd.append(main_class)
     cmd.extend(parsed_game_args)
 
     return cmd
 
+
 def is_a_argument(arg: str, startswith="--"):
     pattern = re.compile(rf"{startswith}(.+)")
     return pattern.match(arg) is not None
+
 
 def generate_argument_details(arguments: list[str | dict], startswith="--") -> list[dict]:
     items = []
@@ -271,13 +329,6 @@ def generate_argument_details(arguments: list[str | dict], startswith="--") -> l
 
     return items
 
+
 def is_same_argument(item: dict, another: dict) -> bool:
     pass
-
-
-
-
-
-
-
-

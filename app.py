@@ -5,20 +5,15 @@ from typing import Callable
 from PySide6 import QtWidgets
 from PySide6.QtCore import QSize
 from PySide6.QtGui import QIcon, Qt, QPixmap
-from PySide6.QtWidgets import QApplication, QMainWindow, QLabel, QVBoxLayout, QWidget, QStyle, QToolButton, \
-    QStackedWidget
+from PySide6.QtWidgets import QApplication, QWidget, QStyle, QToolButton
 
+from constant import LAUNCHER_VERSION
 from core_lib.qt.hack import move_window_to_center, is_light_theme, \
     recolor_icon
 from core_lib.qt import messagebox
 from core_lib.launcher.object import Launcher as LauncherObject
-
-from pages.account import AccountPage
-from pages.create_profile import CreateProfile
-from pages.test import TestPage
-
-LAUNCHER_VERSION = "alpha_0.0.2"
-MAIN_REPO_URL = "https://repo.weispace.net/wei/Launcher/"
+from manager.widgets import WidgetManager
+from window import LauncherMainWindow
 
 class ToolBar(QtWidgets.QToolBar):
     def __init__(self, app: QApplication, parent=None):
@@ -100,20 +95,26 @@ class ToolBar(QtWidgets.QToolBar):
         self.update()
 
 class Launcher(QApplication, LauncherObject):
-    def __init__(self):
+    def __init__(self, logger):
         super().__init__()
-        # Window config
-        self.setApplicationName("TestLauncher")
-        self.main_window = QMainWindow()
-        self.main_window.setGeometry(0, 0, 800, 600)
-        move_window_to_center(self.main_window)
-
         # logger
-        self.logger = logging.getLogger("Launcher.MainWindow")
+        self.logger = logger
 
         # dirs
         self.program_dir = Path(__file__).parent
         self.work_dir = Path.cwd()
+
+        # Widget (Signal, Event)
+        self.widget_manager = WidgetManager()
+
+        # Window config
+        self.setApplicationName("TestLauncher")
+        self.main_window = LauncherMainWindow(
+            app=self,
+            widget_manager=self.widget_manager,
+        )
+        self.main_window.setGeometry(0, 0, 800, 600)
+        move_window_to_center(self.main_window)
 
         # Set icon
         if self.icon_path.exists():
@@ -121,119 +122,10 @@ class Launcher(QApplication, LauncherObject):
         else:
             self.logger.error("No icon found.")
 
-        # Main layout
-        self.central = QStackedWidget()
-        self.toolbar = ToolBar(self, self.main_window)
-
-        # center message (will be deleted if launcher finished development)
-        content = """Still digging!"""
-        message = "If you found that something might be a issue. You can report it to the main repo! Any suggestion are welcome."
-        self.icon_label = QLabel()
-        self.icon_label.setObjectName("icon_label")
-        self.dev_info_box = QLabel(content)
-        self.dev_info_box.setObjectName("dev_info_box")
-        self.dev_info_2 = QLabel(message)
-        self.dev_info_2.setObjectName("dev_info_message")
-        self.version_label = QLabel("Current version: {}".format(self.launcher_version))
-        self.version_label.setObjectName("version_label")
-        self.repo_url_label = QLabel(f"<a href=\"{MAIN_REPO_URL}\">Main repo</a>")
-        self.repo_url_label.setObjectName("repo_url_label")
-        self.repo_url_label.setOpenExternalLinks(True)
-
-        if Path(self.resources_dir, "pictures", "in_progress.png").exists():
-            image = QPixmap(Path(self.resources_dir, "pictures", "in_progress.png"))
-            self.icon_label.setPixmap(image.scaled(300, 300))
-        else:
-            self.icon_label.setText("Ouch. The icon is missing.")
-
-        # Homepage
-        self.home_page = QWidget()
-        self.home_layout = QVBoxLayout(self.home_page)
-        self.home_layout.addStretch()
-        self.home_layout.addWidget(self.icon_label, alignment=Qt.AlignmentFlag.AlignCenter)
-        self.home_layout.addWidget(self.dev_info_box, alignment=Qt.AlignmentFlag.AlignHCenter)
-        self.home_layout.addWidget(self.dev_info_2, alignment=Qt.AlignmentFlag.AlignHCenter)
-        self.home_layout.addWidget(self.version_label, alignment=Qt.AlignmentFlag.AlignHCenter)
-        self.home_layout.addWidget(self.repo_url_label, alignment=Qt.AlignmentFlag.AlignHCenter)
-        self.home_layout.addStretch()
-
-        # test page
-        self.test_page = TestPage(self, self.main_window)
-
-        # Account page
-        self.account_page = AccountPage(self, self.main_window)
-
-        # Profile page
-        self.create_profile_page = CreateProfile(self, self.main_window)
-
-        # Add page
-        self.central.addWidget(self.home_page)
-        self.central.addWidget(self.test_page)
-        self.central.addWidget(self.account_page)
-        self.central.addWidget(self.create_profile_page)
-
-        # Bind toolbar and center widget
-        self.main_window.addToolBar(Qt.ToolBarArea.LeftToolBarArea, self.toolbar)
-        self.main_window.setCentralWidget(self.central)
-
-        # Apply qss
-        self.apply_qss(Path("main.qss"), self.setStyleSheet)
-        self.apply_qss(Path("toolbar.qss"), self.toolbar.setStyleSheet)
-
-        # Toolbar
-
-        # Test Window btn
-        self.open_test_page = self.toolbar.add_button(" Tests", icon=self.get_icon(Path(self.icon_dir, "debug.png")))
-        self.open_test_page.setObjectName("open_test_page")
-
-        # Home btn
-        self.home_button = self.toolbar.add_button(icon=self.get_icon(Path(self.icon_dir, "home.png")))
-
-        # Account btn (will be moved to the bottom (or last one item) of the toolbar
-        self.open_account_page = self.toolbar.add_button(icon=self.get_icon(Path(self.icon_dir, "head.png")))
-
-        # Profile btn
-        self.open_create_profile_page = self.toolbar.add_button(icon=self.get_icon(Path(self.icon_dir, "add_temp.png")))
-
-        # Bind tool buttons
-        self.toolbar.addWidget(self.home_button)
-        self.toolbar.addWidget(self.open_test_page)
-        self.toolbar.addWidget(self.open_create_profile_page)
-        self.toolbar.setMovable(True)
-        self.toolbar.setFloatable(False)
-        self.toolbar.setAllowedAreas(Qt.ToolBarArea.AllToolBarAreas)
-
-        self.toolbar.addWidget(self.toolbar.spacer)
-        self.toolbar.addSeparator()
-        self.toolbar.addWidget(self.open_account_page)
-
-        # Bind page-related button click event
-        self.home_button.clicked.connect(
-            lambda: self.set_current_page(self.home_page, self.home_button)
-        )
-
-        self.open_test_page.clicked.connect(
-            lambda: self.set_current_page(self.test_page, self.open_test_page)
-        )
-
-        self.open_account_page.clicked.connect(
-            lambda: self.set_current_page(self.account_page, self.open_account_page)
-        )
-
-        self.open_create_profile_page.clicked.connect(
-            lambda: self.set_current_page(self.create_profile_page, self.open_create_profile_page)
-        )
-
-        self.set_current_page(self.home_page, self.home_button)
-
     def exec(self):
         self.main_window.show()
-        self.toolbar.update_all()
+        self.main_window.toolbar.update_all()
         self.exec_()
-
-    def set_current_page(self, page: QWidget, related_button: QToolButton):
-        self.central.setCurrentWidget(page)
-        related_button.setFocus()
 
     def get_icon(self, path: Path):
         icon = self.style().standardIcon(QStyle.StandardPixmap.SP_MessageBoxWarning)
@@ -342,6 +234,5 @@ class Launcher(QApplication, LauncherObject):
 
         return ""
 
-
-
-
+    def get_main_window(self):
+        return self.main_window

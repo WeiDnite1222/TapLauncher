@@ -180,6 +180,7 @@ def download_file(file: FileObject, overwrite=True, progress_callback: Callable[
 
     try:
         with requests.get(file.url, stream=True) as r:
+            r.raise_for_status()
             current_chunk = 0
             total_bytes = r.headers.get("content-length", None)
             logger.debug("URL: {}".format(file.url))
@@ -211,7 +212,7 @@ def download_file(file: FileObject, overwrite=True, progress_callback: Callable[
     if any([file.expected_sha1, file.expected_md5, file.expected_sha256]):
         logger.debug("File hash is match as the expected hash.")
     else:
-        logger.warning("File hash is not checked.")
+        logger.warning("Hash is not checked for file: {}".format(file.posix_path))
 
     return file
 
@@ -299,3 +300,8 @@ def get_platform_info():
 
     return platform_name, arch, os_version
 
+def is_valid_zipfile(path: Path) -> bool:
+    try:
+        return zipfile.is_zipfile(path)
+    except OSError:
+        return False
