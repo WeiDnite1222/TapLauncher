@@ -143,10 +143,10 @@ def create_profile(version_id: str, version_type: str, java_args: str="", game_d
 
     return profile, profile_id
 
-def create_profile_file(profiles: dict, profile_filepath: Path, profile_file_bak_filepath: Path | None=None,
+def create_or_save_profile_file(profiles: dict, profile_filepath: Path, profile_file_bak_filepath: Path | None=None,
                         overwrite=True, create_backup=True) -> None:
     """
-    Create a new profile
+    Create or save a new profile
     :param profiles:
     :param profile_filepath:
     :param profile_file_bak_filepath:
@@ -298,6 +298,22 @@ def is_profiles_valid(profiles: dict, fix_wrong=False, ignore_invalid_profile=Fa
 
     return not invalid_ids
 
+def is_profile_valid(profile_data: dict, fix_wrong=False):
+    return _check_profile(profile_data, fix_wrong=fix_wrong)
+
+def is_profile_exists(profiles: dict, profile_id: str) -> bool:
+    if not isinstance(profiles, dict):
+        logger.warning("Profile type is not valid: {}".format(type(profiles)))
+        return False
+
+    profiles_map: dict = profiles.get("profiles")
+
+    if not isinstance(profiles_map, dict):
+        logger.warning("Profile map type is not valid: {}".format(type(profiles_map)))
+        return False
+
+    return profile_id in profiles_map
+
 def list_profiles(profiles: dict) -> dict:
     """
     List all profiles that inside profiles data
@@ -315,6 +331,21 @@ def get_profile(profiles: dict, profile_id: str) -> dict:
         raise ProfileKeyNotFoundException(
             f"Specified profile id {profile_id} not found."
         ) from exc
+
+def set_current_profile_id(profiles: dict, profile_id: str):
+    """
+    Set current profile id
+    INFO: You should ensure profile id is existing in profiles before calling this function.
+    :param profiles:
+    :param profile_id:
+    :return:
+    """
+    profiles["lastPlayedProfileID"] = profile_id
+
+def get_current_profile_id(profiles: dict) -> str | None:
+    return profiles.get("lastPlayedProfileID", None)
+
+get_last_played_profile_id = get_current_profile_id
 
 def add_profile(profiles: dict, profile: dict, max_generate_retry=10) -> tuple[dict, str]:
     """
@@ -359,11 +390,12 @@ def remove_profile(profiles: dict, profile_id: str):
     except KeyError:
         raise ProfileKeyNotFoundException("Specified profile id {} not found.".format(profile_id))
 
-def duplicate_profile(profiles: dict, profile_id: str, max_generate_retry=10) -> str:
+def duplicate_profile(profiles: dict, profile_id: str, new_name: str | None=None, max_generate_retry: int=10) -> str:
     """
     Duplicate a profile
     :param profiles:
     :param profile_id:
+    :param new_name:
     :param max_generate_retry:
     :return:
         new_profile_id: str
@@ -387,7 +419,14 @@ def duplicate_profile(profiles: dict, profile_id: str, max_generate_retry=10) ->
 
     for p_id in profiles_map:
         if p_id == profile_id:
-            profiles["profiles"][new_profile_id] = deepcopy(profiles_map[profile_id])
+            new_profile = deepcopy(profiles_map[profile_id])
+
+            if new_name is not None:
+                new_profile["name"] = new_name
+            else:
+                new_profile["name"] = f'{new_profile.get("name", "")} Copy'
+
+            profiles["profiles"][new_profile_id] = new_profile
             return new_profile_id
 
     raise ProfileKeyNotFoundException(
@@ -426,5 +465,18 @@ def convert_profile_data_to_object(profiles: dict, profile_id: str) -> Profile:
 
     return item
 
+def update_profile(profiles: dict, profile_id: str, profile_data: dict, fix_wrong: bool=False) -> tuple[dict, str]:
+    if not is_profile_exists(profiles, profile_id):
+        raise ProfileException(
+            "Specified profile id {} not found.".format(profile_id)
+        )
 
+    if not is_profile_valid(profile_data, fix_wrong=fix_wrong):
+        raise ProfileException(
+            "Provided profile data is not valid."
+        )
+
+    profiles["profiles"][profile_id] = profile_data
+
+    return profiles, profile_id
 

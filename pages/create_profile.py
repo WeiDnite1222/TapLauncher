@@ -3,8 +3,6 @@ from pathlib import Path
 from PySide6.QtCore import QSize
 from PySide6.QtWidgets import QWidget, QVBoxLayout, QComboBox, QListWidget, QPushButton, QLabel, QHBoxLayout
 
-from core_lib.launcher.object import Launcher as LauncherObject
-
 class CreateProfile(QWidget):
     def __init__(self, app, parent=None):
         super(CreateProfile, self).__init__(parent)

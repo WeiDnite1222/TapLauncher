@@ -12,7 +12,6 @@ from core_lib.qt import messagebox
 from core_lib.qt.progress_dialog import ProgressDialog
 from core_lib.qt.messagebox import ask_yes_no_with_plain_text
 from constant import MAIN_REPO_URL
-from manager.profile import ProfileManager
 from manager.widgets import AskForRequest, SelectPathRequest
 from pages.account import AccountPage
 from pages.create_profile import CreateProfile
@@ -127,9 +126,6 @@ class LauncherMainWindow(QMainWindow):
             self.icon_label.setPixmap(image.scaled(300, 300))
         else:
             self.icon_label.setText("Ouch. The icon is missing.")
-
-        # Manager
-        self.profile_manager = ProfileManager(self)
 
         # Dialog
         self.download_dialog = ProgressDialog(self)

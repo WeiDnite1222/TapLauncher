@@ -1,4 +1,6 @@
 import logging
+import os
+import sys
 from pathlib import Path
 from typing import Callable
 
@@ -12,6 +14,7 @@ from core_lib.qt.hack import move_window_to_center, is_light_theme, \
     recolor_icon
 from core_lib.qt import messagebox
 from core_lib.launcher.object import Launcher as LauncherObject
+from manager.profile import ProfileManager
 from manager.widgets import WidgetManager
 from window import LauncherMainWindow
 
@@ -107,6 +110,9 @@ class Launcher(QApplication, LauncherObject):
         # Widget (Signal, Event)
         self.widget_manager = WidgetManager()
 
+        # Manager
+        self.profile_manager = ProfileManager(self, self.widget_manager)
+
         # Window config
         self.setApplicationName("TestLauncher")
         self.main_window = LauncherMainWindow(
@@ -125,6 +131,10 @@ class Launcher(QApplication, LauncherObject):
     def exec(self):
         self.main_window.show()
         self.main_window.toolbar.update_all()
+
+        # init managers
+        self.profile_manager.profile_load.emit()
+
         self.exec_()
 
     def get_icon(self, path: Path):
@@ -191,6 +201,10 @@ class Launcher(QApplication, LauncherObject):
     @property
     def log_dir(self):
         return self.work_dir / "log"
+
+    @property
+    def default_game_dir(self) -> Path:
+        return self.work_dir / "minecraft" if sys.platform.lower() == "darwin" else self.work_dir / ".minecraft"
 
     @property
     def resources_dir(self):

@@ -89,6 +89,7 @@ class ProgressDialog(QDialog):
 
     @Slot(str, str)
     def add_task(self, task_id: str, name: str):
+        # Prevent new tasks from being deleted by cleanup timer
         if task_id in self.rows:
             return
 
@@ -131,14 +132,16 @@ class ProgressDialog(QDialog):
             self.close_timer.start(2000)
 
     def all_tasks_finished(self):
-        return all(row.finished == True for task_id, row in self.rows.items())
+        return bool(self.rows) and all(
+            row.finished
+            for row in self.rows.values()
+        )
 
     def cleanup(self):
         """
         If you want to use this function with a timer. use self.close_timer.start(TIMEOUT)
         :return:
         """
-        QTimer.singleShot(2000, self.cleanup)
         for task_id in list(self.rows):
             self.remove_task(task_id)
 
