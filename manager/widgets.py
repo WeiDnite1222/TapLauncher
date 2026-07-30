@@ -1,23 +1,12 @@
 import queue
 import threading
 
-from PySide6.QtCore import QObject, Signal, Slot
-from PySide6.QtWidgets import QProgressDialog
+from PySide6.QtCore import QObject, Signal
 
-from core_lib.qt import messagebox
-
-
-class AskForRequest:
-    def __init__(self, title, message):
-        self.title = title
-        self.message = message
-        self.result_queue = queue.Queue(maxsize=1)
+class SignalTransferItem:
+    def __init__(self):
+        self.result_queue = queue.Queue()
         self.wait_event = threading.Event()
-
-        self.details = None # Set this if flag use_plain_text is enabled
-
-        # flags
-        self.use_plain_text = True
 
     def wait(self, timeout: int | None = 10):
         return self.wait_event.wait(timeout)
@@ -28,11 +17,22 @@ class AskForRequest:
         except queue.Empty:
             return None
 
+class AskForRequest(SignalTransferItem):
+    def __init__(self, title, message):
+        super(AskForRequest, self).__init__()
+        self.title = title
+        self.message = message
+        self.result_queue = queue.Queue(maxsize=1)
+
+        self.details = None # Set this if flag use_plain_text is enabled
+
+        # flags
+        self.use_plain_text = True
+
 class SelectPathRequest(AskForRequest):
     def __init__(self, title, message, filter_raw=None):
         super().__init__(title, message)
         self.filter = filter_raw
-
 
 class WidgetManager(QObject):
     def __init__(self):

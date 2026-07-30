@@ -2,10 +2,8 @@ import json
 import subprocess
 import textwrap
 import threading
-import time
 import traceback
 from pathlib import Path
-from uuid import uuid4
 
 from PySide6.QtCore import Qt, QObject, Signal, Slot
 from PySide6.QtWidgets import QPushButton, QVBoxLayout, QPlainTextEdit, \
@@ -13,8 +11,7 @@ from PySide6.QtWidgets import QPushButton, QVBoxLayout, QPlainTextEdit, \
 
 from core_lib.common.common import FileObject, download_multiple_files
 from core_lib.common.exception import VersionNotSelectedException, UnsupportedPlatformException, \
-    NativeResolveException, DownloadException, DependencyException, VersionManifestFetchException, \
-    VersionManifestSaveException, NoSpecifiedVersionKeyException, AssetManifestFetchException, \
+    NativeResolveException, DownloadException, DependencyException, AssetManifestFetchException, \
     AssetManifestSaveException, AssetDataKeyNotFoundException, VersionDataKeyNotFoundException
 from core_lib.game.argument import ArgumentMappings, parse_and_generate_arguments, find_game_and_jvm_args, \
     generate_launch_command
@@ -22,12 +19,11 @@ from core_lib.game.asset import download_assets, check_assets_exist, find_correc
 from core_lib.game.library_core import generate_classpath, download_full_libraries, check_full_libraries_exists
 
 from core_lib.game.version_info import (find_useful_part_in_specific_version_manifest, \
-                                        get_all_versions, get_available_version_types, \
-                                        fetch_and_save_version_manifest, get_specific_version_manifest_url_and_hash,
+                                        get_all_versions, get_available_version_types,
                                         download_core_file)
 from core_lib.qt.hack import is_main_thread
-from core_lib.qt.progress_dialog import ProgressDialog
 from core_lib.runtime.java import find_java_installations
+from manager.game import ManifestManager
 from manager.widgets import SelectPathRequest, AskForRequest
 
 MAX_DOWNLOAD_ATTEMPTS = 3
@@ -40,6 +36,7 @@ class TestPage(QWidget):
         self.app = app
         self.parent = parent
         self.widget_mgr = widget_manager
+        self.manifest_mgr: ManifestManager = app.game_manager.manifest
 
         self.resize(800, 600)
         self.setWindowFlags(self.windowFlags() | Qt.WindowType.WindowMaximizeButtonHint)
@@ -262,7 +259,7 @@ class TestPage(QWidget):
             if not ver:
                 return
 
-            ver_data = self.get_cached_version_manifest(ver)
+            ver_data = self.manifest_mgr.get_cached_version_manifest(ver)
 
             arguments, asset_index, downloads, java_version, libraries, main_class, legacy_game_args = (
                 find_useful_part_in_specific_version_manifest(ver_data))
@@ -408,7 +405,7 @@ class TestPage(QWidget):
     def _load_all_types(self):
         self.signals.clean_ver_types_dropdown.emit()
 
-        data = self.get_cached_version_manifest()
+        data = self.manifest_mgr.get_cached_version_manifest()
         if not data:
             return
 
@@ -418,7 +415,7 @@ class TestPage(QWidget):
     def _load_all_version(self, ver_type):
         self.signals.clean_vers_dropdown.emit()
 
-        data = self.get_cached_version_manifest()
+        data = self.manifest_mgr.get_cached_version_manifest()
         if not data:
             return
 
@@ -429,134 +426,13 @@ class TestPage(QWidget):
         self.signals.update_vers_dropdown.emit(vers)
 
     #
-    # ============ Version Data Cache ============
-    #
-    @property
-    def version_manifest_path(self) -> Path:
-        return Path(self.app.work_dir, "versions", "version_manifest_v2.json")
-
-    def get_specific_version_manifest_path(self, target_version: str) -> Path | None:
-        return Path(self.app.work_dir, "versions", target_version, f"{target_version}.json")
-
-    def switch_between_specific_path(self, specified_ver: str | None = None):
-        if specified_ver is None:
-            path = self.version_manifest_path
-        else:
-            path = self.get_specific_version_manifest_path(specified_ver)
-
-        return path
-
-    def _cache_version_manifest(self, specified_ver: str | None = None, root_manifest: dict | None = None) \
-            -> tuple[bool, dict | None]:
-        data = None
-        path = self.switch_between_specific_path(specified_ver)
-        try:
-            data = fetch_and_save_version_manifest(path, target_version=specified_ver, root_manifest=root_manifest)
-        except VersionManifestFetchException as e:
-            self.widget_mgr.signal.show_error_message.emit(
-                e.user_message,
-            )
-        except VersionManifestSaveException as e:
-            self.widget_mgr.signal.show_error_message.emit(
-                e.user_message,
-            )
-        except Exception as e:
-            self.widget_mgr.signal.show_and_print_error_message.emit(
-                {
-                    "error": traceback.format_exception(e),
-                    "title": "Cache Error",
-                    "message": "An unexpected error occurred while caching version manifest."
-                }
-            )
-
-        return True if data else False, data
-
-    def _read_cached_version_manifest(self, specified_ver: str = None) -> dict | None:
-        path = self.switch_between_specific_path(specified_ver)
-        if not path.exists():
-            self.widget_mgr.signal.show_error_message.emit(
-                "Version manifest missing after check. Please try again later.",
-            )
-            return None
-
-        try:
-            version_manifest = json.loads(path.read_text())
-            return version_manifest
-        except Exception as e:
-            self.widget_mgr.signal.show_and_print_error_message.emit(
-                {
-                    "error": traceback.format_exception(e),
-                    "title": "Cache Error",
-                    "message": "Unable to read version manifest."
-                }
-            )
-            return None
-
-    def get_cached_version_manifest(self, specified_ver: str = None, max_age: int = 3600) -> dict | None:
-        path = self.switch_between_specific_path(specified_ver)
-        file = FileObject(path)
-        sha1 = None
-        root_manifest = None
-
-        if specified_ver:
-            root_manifest = self.get_cached_version_manifest()
-
-            if root_manifest is None:
-                return None
-
-            try:
-                _, sha1 = get_specific_version_manifest_url_and_hash(root_manifest, specified_ver)
-            except NoSpecifiedVersionKeyException as e:
-                self.widget_mgr.signal.show_error_message.emit(
-                    f"Version {specified_ver} does not exist in version manifest.\n{e.user_message}"
-                )
-                return None
-
-        if file.exists:
-            age = time.time() - path.stat().st_mtime
-
-            # For root manifest
-            if not specified_ver and age < max_age:
-                return self._read_cached_version_manifest()
-
-            # Below are all for specific ver
-            if specified_ver and sha1 is None:
-                self.app.logger.warning("Specified version '{}' hash doesn't exist.".format(specified_ver))
-
-            # Also check sha1
-            if specified_ver and age < max_age and file.verify("sha1", sha1):
-                return self._read_cached_version_manifest(specified_ver)
-
-        result, data = self._cache_version_manifest(specified_ver, root_manifest=root_manifest)
-
-        if not result:
-            return None
-
-        return data
-
-    def create_download_progress_callback(self, progress_title: str):
-        task_id = uuid4().hex
-        signals = self.widget_mgr.download_signal
-
-        signals.started.emit(task_id, progress_title)
-
-        def callback(name, percent):
-            signals.progress.emit(
-                task_id,
-                f"Downloading {name}",
-                percent,
-            )
-
-        return callback, task_id
-
-    #
     # ============ Game Files ============
     #
     # INFO: All are not in main thread
     def _download_client(self, ver: str):
-        callback, task_id = self.create_download_progress_callback(f"Downloading {ver} client")
+        callback, task_id = self.manifest_mgr.create_download_progress_callback(f"Downloading {ver} client")
         try:
-            ver_data = self.get_cached_version_manifest(ver)
+            ver_data = self.manifest_mgr.get_cached_version_manifest(ver)
 
             if not ver_data:
                 self.widget_mgr.download_signal.failed.emit(
@@ -611,11 +487,11 @@ class TestPage(QWidget):
             self.widget_mgr.signal.enable_widget.emit(self.button_2)
 
     def _download_libraries(self, ver: str):
-        callback, task_id = self.create_download_progress_callback(f"Downloading libraries for version {ver}")
+        callback, task_id = self.manifest_mgr.create_download_progress_callback(f"Downloading libraries for version {ver}")
         try:
             self.signals.clean_output.emit()
 
-            ver_data = self.get_cached_version_manifest(ver)
+            ver_data = self.manifest_mgr.get_cached_version_manifest(ver)
 
             if not ver_data:
                 self.widget_mgr.download_signal.failed.emit(
@@ -694,11 +570,11 @@ class TestPage(QWidget):
             self.widget_mgr.signal.enable_widget.emit(self.button_3)
 
     def _download_assets(self, ver: str):
-        callback, task_id = self.create_download_progress_callback(f"Downloading assets for version {ver}")
+        callback, task_id = self.manifest_mgr.create_download_progress_callback(f"Downloading assets for version {ver}")
         try:
             self.signals.clean_output.emit()
 
-            ver_data = self.get_cached_version_manifest(ver)
+            ver_data = self.manifest_mgr.get_cached_version_manifest(ver)
 
             if not ver_data:
                 self.widget_mgr.download_signal.failed.emit(
@@ -766,7 +642,7 @@ class TestPage(QWidget):
 
     def _parse_argument(self, ver):
         try:
-            ver_data = self.get_cached_version_manifest(ver)
+            ver_data = self.manifest_mgr.get_cached_version_manifest(ver)
 
             if not ver_data:
                 return
@@ -815,7 +691,7 @@ class TestPage(QWidget):
             # , 3 = check assets
 
             # Version manifest
-            ver_data = self.get_cached_version_manifest(ver)
+            ver_data = self.manifest_mgr.get_cached_version_manifest(ver)
 
             if not ver_data:
                 return
@@ -849,7 +725,7 @@ class TestPage(QWidget):
             current_status = 3
             default_assets_dir = Path(self.app.work_dir, "assets")
             if not check_assets_exist(ver_data, default_assets_dir, launcher_root=self.app.work_dir):
-                callback, task_id = self.create_download_progress_callback(
+                callback, task_id = self.manifest_mgr.create_download_progress_callback(
                     "Downloading missing assets"
                 )
 
@@ -996,7 +872,7 @@ class TestPage(QWidget):
         # copy
         pending = list(files)
 
-        callback, task_id = self.create_download_progress_callback(f"Redownloading {len(files)} files.")
+        callback, task_id = self.manifest_mgr.create_download_progress_callback(f"Redownloading {len(files)} files.")
 
         for retry_time in range(1, MAX_DOWNLOAD_ATTEMPTS + 1):
             if not pending:

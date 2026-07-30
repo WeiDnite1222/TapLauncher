@@ -14,7 +14,8 @@ from core_lib.qt.messagebox import ask_yes_no_with_plain_text
 from constant import MAIN_REPO_URL
 from manager.widgets import AskForRequest, SelectPathRequest
 from pages.account import AccountPage
-from pages.create_profile import CreateProfile
+from pages.create_profile  import CreateProfilePage
+from pages.launch_profile import LaunchProfilePage
 from pages.test import TestPage
 
 class ToolBar(QtWidgets.QToolBar):
@@ -97,10 +98,11 @@ class ToolBar(QtWidgets.QToolBar):
         self.update()
 
 class LauncherMainWindow(QMainWindow):
-    def __init__(self, / ,app, widget_manager, parent: QWidget | None=None):
+    def __init__(self, / ,app, parent: QWidget | None=None):
         super(LauncherMainWindow, self).__init__(parent)
         self.app = app
-        self.widget_manager = widget_manager
+        self.widget_manager = app.widget_manager
+        self.game_manager = app.game_manager
 
         # Main layout
         self.central = QStackedWidget()
@@ -148,17 +150,23 @@ class LauncherMainWindow(QMainWindow):
             widget_manager=self.app.widget_manager
         )
 
+        self.launch_profile_page = LaunchProfilePage(
+            app=self.app,
+            parent=self,
+        )
+
         # Account page
         self.account_page = AccountPage(self.app, self)
 
         # Profile page
-        self.create_profile_page = CreateProfile(self.app, self)
+        self.create_profile_page = CreateProfilePage(self.app, self)
 
         # Add page
         self.central.addWidget(self.home_page)
         self.central.addWidget(self.test_page)
         self.central.addWidget(self.account_page)
         self.central.addWidget(self.create_profile_page)
+        self.central.addWidget(self.launch_profile_page)
 
         # Bind toolbar and center widget
         self.addToolBar(Qt.ToolBarArea.LeftToolBarArea, self.toolbar)
@@ -174,6 +182,10 @@ class LauncherMainWindow(QMainWindow):
         self.open_test_page = self.toolbar.add_button(" Tests", icon=self.app.get_icon(Path(self.app.icon_dir, "debug.png")))
         self.open_test_page.setObjectName("open_test_page")
 
+        # Launch profile btn
+        self.open_launch_profile_page = self.toolbar.add_button(" Launch Profile",
+                                                                icon=self.app.get_icon(Path(self.app.icon_dir, "profile_default.png")))
+
         # Home btn
         self.home_button = self.toolbar.add_button(icon=self.app.get_icon(Path(self.app.icon_dir, "home.png")))
 
@@ -187,6 +199,7 @@ class LauncherMainWindow(QMainWindow):
         self.toolbar.addWidget(self.home_button)
         self.toolbar.addWidget(self.open_test_page)
         self.toolbar.addWidget(self.open_create_profile_page)
+        self.toolbar.addWidget(self.open_launch_profile_page)
         self.toolbar.setMovable(True)
         self.toolbar.setFloatable(False)
         self.toolbar.setAllowedAreas(Qt.ToolBarArea.AllToolBarAreas)
@@ -202,6 +215,10 @@ class LauncherMainWindow(QMainWindow):
 
         self.open_test_page.clicked.connect(
             lambda: self.set_current_page(self.test_page, self.open_test_page)
+        )
+
+        self.open_launch_profile_page.clicked.connect(
+            lambda: self.set_current_page(self.launch_profile_page, self.open_launch_profile_page)
         )
 
         self.open_account_page.clicked.connect(

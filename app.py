@@ -14,6 +14,7 @@ from core_lib.qt.hack import move_window_to_center, is_light_theme, \
     recolor_icon
 from core_lib.qt import messagebox
 from core_lib.launcher.object import Launcher as LauncherObject
+from manager.game import GameManager
 from manager.profile import ProfileManager
 from manager.widgets import WidgetManager
 from window import LauncherMainWindow
@@ -109,6 +110,7 @@ class Launcher(QApplication, LauncherObject):
 
         # Widget (Signal, Event)
         self.widget_manager = WidgetManager()
+        self.game_manager = GameManager(self)
 
         # Manager
         self.profile_manager = ProfileManager(self, self.widget_manager)
@@ -116,8 +118,7 @@ class Launcher(QApplication, LauncherObject):
         # Window config
         self.setApplicationName("TestLauncher")
         self.main_window = LauncherMainWindow(
-            app=self,
-            widget_manager=self.widget_manager,
+            app=self
         )
         self.main_window.setGeometry(0, 0, 800, 600)
         move_window_to_center(self.main_window)

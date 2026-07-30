@@ -129,7 +129,7 @@ class ProgressDialog(QDialog):
         row.finished = True
 
         if self.all_tasks_finished():
-            self.close_timer.start(2000)
+            self.close_timer.start(600)
 
     def all_tasks_finished(self):
         return bool(self.rows) and all(
