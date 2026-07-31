@@ -1,11 +1,15 @@
 from pathlib import Path
 
-from PySide6.QtCore import Qt, Signal, QPointF
-from PySide6.QtGui import QIcon, QMouseEvent, QHideEvent, QPixmap, QPainter, QColor
-from PySide6.QtWidgets import QWidget, QVBoxLayout, QLabel, QHBoxLayout, QPushButton, QScrollArea, QGridLayout, \
-    QComboBox, QFrame, QSizePolicy, QApplication, QGraphicsDropShadowEffect
+from PySide6.QtCore import Qt, Signal
+from PySide6.QtGui import QIcon, QMouseEvent, QHideEvent, QPixmap, QPainter
+from PySide6.QtWidgets import (QWidget, QVBoxLayout, QLabel, QHBoxLayout, QPushButton, QScrollArea, QFrame,
+                               QSizePolicy, QApplication)
 
+from manager.game import LaunchManager
+from core_lib.game.version_info import LATEST_VERSION_ALIASES
 from manager.profile import ProfileSummary
+from manager.widgets import AskForRequest, WidgetManager
+from pages.process_log import ProcessLogWindow
 
 
 class ProfileButton(QFrame):
@@ -61,7 +65,7 @@ class ProfileButton(QFrame):
         :return:
         """
         self.setProperty("profile_id", profile.id)
-        self.name_label.setText(profile.name)
+        self.name_label.setText(profile.display_name)
         self.version_label.setText(profile.version_id)
 
         icon_path = profile.icon
@@ -103,7 +107,9 @@ class ProfileListItem(QPushButton):
 
         text_layout = QVBoxLayout()
         text_layout.setSpacing(1)
-        name_label = QLabel(profile.name)
+
+        name_label = QLabel(profile.display_name)
+
         name_label.setObjectName("itemName")
         version_label = QLabel(profile.version_id)
         version_label.setObjectName("itemVersion")
@@ -180,7 +186,11 @@ class LaunchProfilePage(QWidget):
     def __init__(self, app, parent=None):
         super(LaunchProfilePage, self).__init__(parent)
         self.app = app
+        self.widget_mgr: WidgetManager = app.widget_manager
         self.profile_manager = app.profile_manager
+        self.game_manager = app.game_manager
+        self.launch_manager: LaunchManager = self.game_manager.launch
+        self.process_log_windows: list[ProcessLogWindow] = []
 
         # Layout
         self.layout = QVBoxLayout(self)
@@ -354,4 +364,49 @@ class LaunchProfilePage(QWidget):
 
     def launch_profile(self) -> None:
         profile_id = self.profile_button.property("profile_id")
-        self.status_label.setText(f"Preparing to launch...")
+        self.status_label.setText("Preparing to launch...")
+        launch_profile = self.app.profile_manager.get_launch_profile(profile_id)
+
+        if launch_profile is None:
+            self.status_label.setText("Unable to load the selected profile.")
+            return
+
+        if self.launch_manager.is_profile_running(launch_profile.profile_id):
+            request = AskForRequest(
+                "Launch Request",
+                "Target profile {} is running. Are you sure you want to launch it again?".format(
+                    launch_profile.display_name
+                ),
+            )
+            self.widget_mgr.signal.askyesno.emit(request)
+
+            if not request.wait(60):
+                self.widget_mgr.signal.show_error_message.emit(
+                    "Time out waiting for request for launch."
+                )
+                return
+
+            if not request.result() is True:
+                return
+
+        result = self.launch_manager.launch(launch_profile)
+
+        if result.success:
+            self.status_label.setText("Launched!")
+            log_window = ProcessLogWindow(
+                result.process,
+                launch_profile.profile_id,
+                title=f"Minecraft Log - {launch_profile.display_name} ({launch_profile.version_id})",
+                parent=None,
+            )
+            for warning in result.warnings:
+                log_window.append_message(f"[launcher warning] {warning}")
+            self.process_log_windows.append(log_window)
+            log_window.show()
+        else:
+            self.widget_mgr.signal.show_error_message.emit(
+                "Unable to launch profile {}: {}".format(
+                    launch_profile.display_name,
+                    result.error_message,
+                )
+            )

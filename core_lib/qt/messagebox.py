@@ -46,6 +46,38 @@ def warning(parent: QWidget, title: str, message: str,
     ).exec()
 
 
+def error_with_plain_text(
+    parent: QWidget,
+    title: str,
+    message: str,
+    content: str,
+) -> None:
+    dialog = QDialog(parent)
+    dialog.setWindowTitle(title)
+    dialog.resize(720, 420)
+
+    layout = QVBoxLayout(dialog)
+
+    label = QLabel(message)
+    label.setWordWrap(True)
+
+    details_box = QPlainTextEdit()
+    details_box.setReadOnly(True)
+    details_box.setPlainText(content)
+    details_box.setSizePolicy(
+        QSizePolicy.Policy.Expanding,
+        QSizePolicy.Policy.Expanding,
+    )
+
+    buttons = QDialogButtonBox(QDialogButtonBox.StandardButton.Ok)
+    buttons.accepted.connect(dialog.accept)
+
+    layout.addWidget(label)
+    layout.addWidget(details_box, 1)
+    layout.addWidget(buttons)
+    dialog.exec()
+
+
 def ask_yes_no_with_plain_text(parent: QWidget, title: str, message: str, content: str):
     dialog = QDialog(parent)
     dialog.setWindowTitle(title)

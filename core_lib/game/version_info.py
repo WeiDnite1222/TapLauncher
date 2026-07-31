@@ -306,11 +306,16 @@ def fetch_specific_version_manifest(version_manifest: dict, spec_version: str) -
 # mapping
 get_specific_version_manifest = fetch_specific_version_manifest
 
-def find_useful_part_in_specific_version_manifest(spec_version_manifest: dict)\
+def default_java_version():
+    return {"component": "jre-legacy", "majorVersion": 8}
+
+def find_useful_part_in_specific_version_manifest(spec_version_manifest: dict,
+                                                  failback_java_version: dict | None=None) \
         -> tuple[dict | None, dict | None, dict | None, dict | None, list | None, str | None, str | None]:
     """
     Return useful part from version manifest.
     :param spec_version_manifest: Specific version's data
+    :param failback_java_version: Failback java version data (default is Java 8)
     :return:
         arguments: dict (contains jvm and game args, for newer version of Minecraft)
         asset_index: dict
@@ -323,10 +328,14 @@ def find_useful_part_in_specific_version_manifest(spec_version_manifest: dict)\
     arguments = spec_version_manifest.get("arguments", {})
     asset_index = spec_version_manifest.get("assetIndex", {})
     downloads = spec_version_manifest.get("downloads", {})
-    java_version = spec_version_manifest.get("javaVersion", {})
     libraries = spec_version_manifest.get("libraries", [])
     main_class = spec_version_manifest.get("mainClass", None)
     legacy_game_args = spec_version_manifest.get("minecraftArguments", None)
+
+    if failback_java_version is None:
+        failback_java_version = default_java_version()
+
+    java_version = spec_version_manifest.get("javaVersion", failback_java_version)
 
     if not arguments and not legacy_game_args:
         raise VersionDataKeyNotFoundException(
@@ -501,3 +510,9 @@ def download_core_file(manifest: dict, destination: Path, is_server=False, raise
         )
 
     return file
+
+
+LATEST_VERSION_ALIASES = {
+    "latest-release": {"displayName": "Latest Release"},
+    "latest-snapshot": {"displayName": "Latest Snapshot"},
+}

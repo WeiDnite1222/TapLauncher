@@ -1,5 +1,7 @@
 """
-IMPORTANT: Still under construction!
+Profile Manager
+
+A Minecraft profile manager that completely support official Minecraft Launcher.
 """
 import copy
 from dataclasses import dataclass
@@ -11,14 +13,16 @@ from datetime import datetime
 from core_lib.common.exception import ProfileException, ProfileLoadException, ProfileSaveException
 from core_lib.game.profile import read_profile_file, is_profiles_valid, \
     get_profile_sample, create_or_save_profile_file, list_profiles as list_profiles_raw, convert_profile_data_to_object, \
-    is_profile_exists, create_profile as create_profile_raw, update_profile as update_profile_raw, is_profile_valid, \
+    is_profile_exists, create_profile as create_profile_raw, update_profile as update_profile_raw, \
     get_current_profile_id, set_current_profile_id, remove_profile, duplicate_profile
+from core_lib.game.version_info import LATEST_VERSION_ALIASES
 from manager.widgets import AskForRequest
 
 DEFAuLT_PROFILE_RELATIVE_PATH = Path("launcher_profiles.json")
 
 @dataclass(frozen=True)
 class ProfileSummary:
+    display_name: str
     id: str
     name: str
     version_id: str
@@ -62,6 +66,8 @@ class UpdateProfileRequest:
 
 @dataclass(frozen=True)
 class LaunchProfile:
+    display_name: str
+    name: str
     profile_id: str
     version_id: str
     version_type: str
@@ -235,6 +241,7 @@ class ProfileManager(QObject):
         for profile_id in profiles:
             profile = convert_profile_data_to_object(self.profiles, profile_id)
             profile_summary = ProfileSummary(
+                display_name=self._get_profile_display_name(profile.name, profile.version_id),
                 icon=str(profile.icon),
                 id=profile_id,
                 last_used=profile.last_used,
@@ -265,6 +272,7 @@ class ProfileManager(QObject):
             )
 
         return ProfileDetail(
+            display_name=self._get_profile_display_name(profile.name, profile.version_id),
             id=profile_id,
             name=profile.name,
             version_id=profile.version_id,
@@ -356,6 +364,22 @@ class ProfileManager(QObject):
                 f"Invalid profile request: {e}"
             )
             return None
+
+
+    def _get_profile_display_name(self, existing_name: str, version_id: str) -> str:
+        if existing_name.strip():
+            return existing_name.strip()
+
+        return self._get_profile_alias_display_name(version_id)
+
+    @staticmethod
+    def _get_profile_alias_display_name(version_id: str) -> str:
+        alias = LATEST_VERSION_ALIASES.get(version_id)
+
+        if alias:
+            return alias.get("displayName", version_id)
+
+        return "Unnamed Profile"
 
     def update_profile(self, profile_id: str, changes: UpdateProfileRequest) -> bool:
         # Check profile exists
@@ -566,6 +590,11 @@ class ProfileManager(QObject):
         )
 
         return LaunchProfile(
+            display_name=self._get_profile_display_name(
+                profile.name,
+                profile.version_id,
+            ),
+            name=profile.name,
             profile_id=profile.id,
             version_id=profile.version_id,
             version_type=profile.version_type,
