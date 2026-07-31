@@ -400,6 +400,48 @@ def get_core_file_download_url_and_hash(version_manifest: dict, is_server: bool=
 
     return download_url, sha1
 
+def save_version_manifest(manifest: dict, dest: Path, sha1: str | None=None) -> dict:
+    """
+    Save version manifest with hash verify
+    :param manifest:
+    :param dest:
+    :param sha1:
+    :return:
+        data: dict
+    """
+    file = FileObject(
+        path=dest,
+        sha1=sha1,
+    )
+
+    dest.parent.mkdir(parents=True, exist_ok=True)
+
+    try:
+        method = "wb" if isinstance(manifest, bytes) else "w"
+        with dest.open(method) as f:
+            if isinstance(manifest, bytes):
+                f.write(manifest)
+            elif isinstance(manifest, dict):
+                json.dump(manifest, f)
+
+        if sha1 is not None and not file.verify_sha1(sha1):
+            raise HashMismatchException(
+                "sha1",
+                file.sha1,
+                sha1,
+                file.posix_path
+            )
+
+        if isinstance(manifest, bytes):
+            # Convert the data back to dict
+            return json.loads(manifest.decode("utf-8"))
+        else:
+            return manifest
+    except Exception as e:
+        logger.exception(e)
+        raise VersionManifestSaveException(
+            "Error saving version manifest:\n{}".format(e)
+        )
 
 def fetch_and_save_version_manifest(dest: Path, target_version: str=None, root_manifest=None) -> dict | None:
     """
@@ -423,39 +465,7 @@ def fetch_and_save_version_manifest(dest: Path, target_version: str=None, root_m
         data = root_manifest
         sha1 = None
 
-    file = FileObject(
-        path=dest,
-        sha1=sha1,
-    )
-
-    dest.parent.mkdir(parents=True, exist_ok=True)
-
-    try:
-        method = "wb" if isinstance(data, bytes) else "w"
-        with dest.open(method) as f:
-            if isinstance(data, bytes):
-                f.write(data)
-            elif isinstance(data, dict):
-                json.dump(data, f)
-
-        if sha1 is not None and not file.verify_sha1(sha1):
-            raise HashMismatchException(
-                "sha1",
-                file.sha1,
-                sha1,
-                file.posix_path
-            )
-
-        if isinstance(data, bytes):
-            # Convert the data back to dict
-            return json.loads(data.decode("utf-8"))
-        else:
-            return data
-    except Exception as e:
-        logger.exception(e)
-        raise VersionManifestSaveException(
-            "Error saving version manifest:\n{}".format(e)
-        )
+    return save_version_manifest(data, dest, sha1)
 
 def download_core_file(manifest: dict, destination: Path, is_server=False, raise_for_null_hash=False,
                        progress_callback: Callable[[str, float], None]=None) -> FileObject:

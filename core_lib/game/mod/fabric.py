@@ -13,6 +13,9 @@ FABRIC_META_LOADER_VERSION_ENDPOINT_V2 = "https://meta.fabricmc.net/v2/versions/
 FABRIC_META_LOADER_MANIFEST_ENDPOINT_V2 = "https://meta.fabricmc.net/v2/versions/loader/{}/{}/profile/json"
 FABRIC_MAVEN_URL = "https://maven.fabricmc.net/"
 
+def get_full_version_string(version: str, loader_version: str) -> str:
+    return f"fabric-loader-{loader_version}-{version}"
+
 def fetch_fabric_version_list(version_manifest_url: str=FABRIC_META_VERSION_ENDPOINT_V2, timeout: int=5) -> list[dict]:
     try:
         r = requests.get(version_manifest_url, timeout=timeout)
@@ -66,6 +69,7 @@ def get_version_support_loader_list(target_version: str, loader_version_url: str
         -> list[dict]:
     try:
         r = requests.get(loader_version_url.format(target_version), timeout=timeout)
+        r.raise_for_status()
     except requests.exceptions.Timeout:
         raise VersionManifestFetchException(
             "Timeout while fetch from {}".format(loader_version_url)
@@ -75,9 +79,15 @@ def get_version_support_loader_list(target_version: str, loader_version_url: str
             "Connection error while fetch from {}: {}".format(loader_version_url, e)
         )
     except requests.exceptions.HTTPError as e:
-        raise VersionManifestFetchException(
-            "HTTP error while fetch from {}: HTTP Status: {}".format(loader_version_url, e.response.status_code)
-        )
+        if e.response.status_code == 404 or e.response.status_code == 400:
+            raise VersionManifestFetchException(
+                "HTTP error while fetch from {}: {}".format(loader_version_url, e),
+                user_message="Target version {} no fabric version found".format(target_version)
+            )
+        else:
+            raise VersionManifestFetchException(
+                "HTTP error while fetch from {}: HTTP Status: {}".format(loader_version_url, e.response.status_code)
+            )
     except Exception as e:
         raise VersionManifestFetchException(
             "Unknown error while fetch from {}: {}".format(loader_version_url, e)
@@ -102,7 +112,8 @@ def get_version_support_loader_list(target_version: str, loader_version_url: str
 
     if not loaders:
         raise VersionManifestException(
-            "No available loader found in {}".format(loader_version_url)
+            "No available loader found in {}".format(loader_version_url),
+            user_message="Target version {} no fabric version found".format(target_version)
         )
 
     return loaders
@@ -121,6 +132,7 @@ def get_loader_manifest_from_loader_data(target_version: str, loader_data: dict,
 
     try:
         r = requests.get(url, timeout=5)
+        r.raise_for_status()
     except requests.exceptions.Timeout:
         raise VersionManifestFetchException(
             "Timeout while fetch from {}".format(url)
@@ -149,7 +161,4 @@ def get_loader_manifest_from_loader_data(target_version: str, loader_data: dict,
         raise VersionManifestFetchException(
             "Unknown error while fetch from {}: {}".format(url, e)
         )
-
-
-
 

@@ -136,16 +136,15 @@ def find_java_installations(extra_install_patterns: list | None=None) -> tuple[l
         try:
             ver, raw = get_java_version(converted_path)
         except JavaRuntimeParseException:
-
             logger.debug(f"Unable to parse java version: {converted_path}")
         except JavaRuntimeException:
             logger.debug(f"Unable to run java executable: {converted_path}")
         except Exception as e:
             logger.exception(f"Unhandled exception: {e} (For path: {converted_path})")
-        finally:
-            if not ver:
-                errors.append(converted_path)
-                continue
+
+        if not ver:
+            errors.append(converted_path)
+            continue
 
         logger.debug(f"Detected java version {ver} for path: {converted_path}")
 
