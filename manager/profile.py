@@ -101,6 +101,8 @@ class ProfileManager(QObject):
             self.load,
         )
 
+        self.load()
+
     @property
     def default_profile_path(self):
         return Path(self.app.work_dir, DEFAuLT_PROFILE_RELATIVE_PATH)

@@ -1,0 +1,56 @@
+QFrame#profileButton {
+    background: palette(mid);
+    border: 1px solid palette(midlight);
+    border-radius: 5px;
+}
+
+QFrame#profileButton:hover {
+    background: palette(midlight);
+}
+
+QLabel#profileName, QLabel#itemName {
+    color: #f4f6f8;
+    font-size: 16px;
+    font-weight: 600;
+}
+
+QLabel#profileVersion, QLabel#itemVersion {
+    color: #aeb6c2;
+    font-size: 12px;
+}
+
+QLabel#profileArrow {
+    font-size: 18px;
+}
+QFrame#profilePopup {
+    background: palette(mid);
+    border: 1px solid palette(midlight);
+    border-radius: 5px;
+}
+
+QPushButton#profileItem {
+    background: transparent;
+    border: none;
+    text-align: left;
+}
+
+QPushButton#profileItem:hover {
+    background: #3d6fb4;
+}
+
+QPushButton#launchButton {
+    min-width: 150px;
+    font-size: 15px;
+    font-weight: 600;
+}
+
+QLabel#headerLabel {
+    font-size: 20px;
+    font-weight: bold
+}
+
+QFrame#profileFrame {
+    background-color: palette(base);
+    border: 1px solid palette(mid);
+    border-radius: 10px;
+}

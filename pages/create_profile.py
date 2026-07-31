@@ -156,16 +156,28 @@ class CreateProfilePage(QWidget):
             self.start_load_mod_loader_version
         )
 
+        self.mod_loader_dropdown.currentTextChanged.connect(
+            self.update_mod_loader_icon
+        )
+
         self.loader_list = {
             "Don't Install": {
                 "type": "vanilla",
+                "icon": Path(self.app.icon_dir, "vanilla.png"),
                 "loadVersionMethod": self.load_vanilla_version_list,
                 "profileCreateHandler": self.handle_vanilla_profile_create,
             },
             "Fabric": {
                 "type": "modded",
+                "icon": Path(self.app.icon_dir, "modLoader", "fabric.png"),
                 "loadVersionMethod": getattr(self, "load_fabric_version_list", None),
                 "profileCreateHandler": self.handle_fabric_profile_create,
+            },
+            "NeoForge": {
+                "type": "modded",
+                "icon": Path(self.app.icon_dir, "modLoader", "neoforged.ico"),
+                "loadVersionMethod": getattr(self, "load_neoforge_version_list", None),
+                "profileCreateHandler": self.handle_neoforge_profile_create,
             }
         }
         self.init_all()
@@ -243,6 +255,34 @@ class CreateProfilePage(QWidget):
         if callable(request.complete_callback):
             request.complete_callback()
 
+    @Slot(str)
+    def update_mod_loader_icon(self, loader_name: str):
+        loader = self.loader_list.get(loader_name)
+        if not loader:
+            self.app.logger.warning(
+                "Mod Loader {} not found".format(loader_name)
+            )
+            return
+
+        icon_path = loader.get("icon")
+        if not isinstance(icon_path, Path):
+            self.app.logger.warning(
+                "Mod Loader {} icon path not found or is not Path type".format(loader_name)
+            )
+            return
+
+        pixmap = self.app.get_picture(
+            icon_path,
+            QSize(100, 100),
+        )
+
+        pixmap = pixmap.scaled(
+            QSize(100, 100),
+            Qt.AspectRatioMode.KeepAspectRatio,
+            Qt.TransformationMode.SmoothTransformation,
+        )
+
+        self.mod_loader_icon_label.setPixmap(pixmap)
 
     @staticmethod
     def clean_list(target_list: QListWidget | QComboBox):

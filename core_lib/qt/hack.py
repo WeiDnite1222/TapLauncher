@@ -89,4 +89,17 @@ def is_light_theme(widget=None) -> bool:
 
     return luminance >= 0.5
 
+def add_icon_padding(icon: QIcon, icon_size=32, padding=6) -> QIcon:
+    source = icon.pixmap(icon_size, icon_size)
+
+    canvas_size = icon_size + padding * 2
+    canvas = QPixmap(canvas_size, canvas_size)
+    canvas.fill(Qt.GlobalColor.transparent)
+
+    painter = QPainter(canvas)
+    painter.drawPixmap(padding, padding, source)
+    painter.end()
+
+    return QIcon(canvas)
+
 # ======================== AI generated END ========================

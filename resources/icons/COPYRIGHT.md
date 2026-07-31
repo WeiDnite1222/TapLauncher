@@ -6,5 +6,5 @@
 - profile_default.png : [Source](https://www.pixilart.com/art/minecraft-crafting-table-8aa9e1b9aee1a62)
 - modLoader/fabric.png : [Source](https://fabricmc.net/assets/logo.png)
 - modLoader/neoforged.png : [Source](https://raw.githubusercontent.com/neoforged/.github/refs/heads/main/art/neoforged.ico)
-
+- vanilla.png : [Source](https://en.wikipedia.org/wiki/File:Updated_Minecraft_cube.svg) 
 ## For the icon owner: If you want to take down icon that infringing upon your copyright. Contact us with this [link](https://repo.weispace.net/wei/Launcher)
