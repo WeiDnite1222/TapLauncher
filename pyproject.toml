@@ -1,5 +1,5 @@
 [project]
-name = "testlauncher"
+name = "testlauncher(taplauncher)"
 version = "0.0.4a0"
 description = "A lightweight Minecraft launcher."
 readme = "README.md"

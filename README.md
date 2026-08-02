@@ -1,4 +1,4 @@
-# TestLauncher
+# TestLauncher (TapLauncher)
 
 # Still thinking about its name...
 # There's no stable branch because this project is still under development.
