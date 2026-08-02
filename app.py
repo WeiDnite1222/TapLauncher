@@ -1,29 +1,28 @@
-import logging
-import os
 import sys
 from pathlib import Path
 from typing import Callable
 
-from PySide6 import QtWidgets
 from PySide6.QtCore import QSize
-from PySide6.QtGui import QIcon, Qt, QPixmap
-from PySide6.QtWidgets import QApplication, QWidget, QStyle, QToolButton
+from PySide6.QtGui import QIcon, QPixmap
+from PySide6.QtWidgets import QApplication, QStyle
 
 from constant import LAUNCHER_VERSION
 from core_lib.qt.hack import move_window_to_center, is_light_theme, \
     recolor_icon
 from core_lib.qt import messagebox
 from core_lib.launcher.object import Launcher as LauncherObject
+from manager.account import AccountManager
 from manager.game import GameManager
 from manager.profile import ProfileManager
 from manager.widgets import WidgetManager
 from window import LauncherMainWindow
 
 class Launcher(QApplication, LauncherObject):
-    def __init__(self, logger):
+    def __init__(self, logger, debug: bool = False):
         super().__init__()
         # logger
         self.logger = logger
+        self.debug = debug
 
         # dirs
         self.program_dir = Path(__file__).parent
@@ -31,10 +30,10 @@ class Launcher(QApplication, LauncherObject):
 
         # Widget (Signal, Event)
         self.widget_manager = WidgetManager()
-        self.game_manager = GameManager(self)
-
         # Manager
         self.profile_manager = ProfileManager(self, self.widget_manager)
+        self.account_manager = AccountManager(self, self.widget_manager)
+        self.game_manager = GameManager(self)
 
         # Window config
         self.setApplicationName("TestLauncher")
@@ -51,15 +50,15 @@ class Launcher(QApplication, LauncherObject):
             self.logger.error("No icon found.")
 
     def exec(self):
-        self.main_window.show()
-        self.main_window.toolbar.update_all()
-
         # init managers
         self.profile_manager.profile_load.emit()
+        self.account_manager.account_load.emit()
 
+        self.main_window.show()
+        self.main_window.toolbar.update_all()
         self.exec_()
 
-    def get_icon(self, path: Path):
+    def get_icon(self, path: Path, no_color_change: bool = False) -> QIcon:
         icon = self.style().standardIcon(QStyle.StandardPixmap.SP_MessageBoxWarning)
         if not path.exists() or not path.is_file():
             messagebox.error(
@@ -71,7 +70,7 @@ class Launcher(QApplication, LauncherObject):
             return icon
 
         try:
-            if is_light_theme() and path.name.endswith(".png"):
+            if is_light_theme() and path.name.endswith(".png") and not no_color_change:
                 icon = recolor_icon(
                     path
                 )

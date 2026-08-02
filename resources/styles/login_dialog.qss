@@ -1,0 +1,33 @@
+QDialog {
+    background-color: palette(window);
+}
+
+QLabel#dialogTitle {
+    font-size: 18px; font-weight: 600;
+}
+
+QLabel#helpText {
+    color: palette(window-text); font-size: 13px;
+}
+
+QLineEdit#codeEdit {
+    min-height: 50px;
+    padding: 0 12px;
+    border-radius: 7px;
+    background-color: palette(base);
+    font-size: 25px;
+    font-weight: 600;
+    letter-spacing: 2px;
+}
+
+QLabel#errorMessage {
+    padding: 9px 11px;
+    border-radius: 6px;
+    background-color: rgba(210, 55, 55, 28);
+    color: #c93636;
+    font-size: 12px;
+}
+
+QPushButton {
+    min-height: 40px;
+}

@@ -1,4 +1,6 @@
 from __future__ import annotations
+
+import base64
 import hashlib
 import logging
 import platform
@@ -305,3 +307,23 @@ def is_valid_zipfile(path: Path) -> bool:
         return zipfile.is_zipfile(path)
     except OSError:
         return False
+
+def bytes_to_data_url(image_data: bytes,  mime_type: str = "image/png",) -> str:
+    """
+    Convert raw image bytes to a Base64 Data URL.
+    :param image_data:
+    :param mime_type:
+    :return:
+        data_url: str
+    """
+    if not isinstance(image_data, bytes):
+        raise TypeError("image_data must be bytes")
+
+    if not image_data:
+        raise ValueError("image_data cannot be empty")
+
+    if not isinstance(mime_type, str) or not mime_type.startswith("image/"):
+        raise ValueError("mime_type must be a valid image MIME type")
+
+    encoded = base64.b64encode(image_data).decode("ascii")
+    return f"data:{mime_type};base64,{encoded}"

@@ -197,7 +197,7 @@ class LaunchProfilePage(QWidget):
         self.bottom_layout = QHBoxLayout()
 
         # Widgets
-        self.status_label = QLabel("Select a version to launch")
+        self.status_label = QLabel("Select a profile to launch")
         self.status_label.setStyleSheet("font-size: 12px; font-weight: 600;")
         self.status_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
 
@@ -363,50 +363,54 @@ class LaunchProfilePage(QWidget):
         self.profile_button.set_popup_open(False)
 
     def launch_profile(self) -> None:
-        profile_id = self.profile_button.property("profile_id")
-        self.status_label.setText("Preparing to launch...")
-        launch_profile = self.app.profile_manager.get_launch_profile(profile_id)
+        try:
+            profile_id = self.profile_button.property("profile_id")
+            self.status_label.setText("Preparing to launch...")
+            launch_profile = self.app.profile_manager.get_launch_profile(profile_id)
 
-        if launch_profile is None:
-            self.status_label.setText("Unable to load the selected profile.")
-            return
+            if launch_profile is None:
+                self.status_label.setText("Unable to load the selected profile.")
+                return
 
-        if self.launch_manager.is_profile_running(launch_profile.profile_id):
-            request = AskForRequest(
-                "Launch Request",
-                "Target profile {} is running. Are you sure you want to launch it again?".format(
-                    launch_profile.display_name
-                ),
-            )
-            self.widget_mgr.signal.askyesno.emit(request)
+            if self.launch_manager.is_profile_running(launch_profile.profile_id):
+                request = AskForRequest(
+                    "Launch Request",
+                    "Target profile {} is running. Are you sure you want to launch it again?".format(
+                        launch_profile.display_name
+                    ),
+                )
+                self.widget_mgr.signal.askyesno.emit(request)
 
-            if not request.wait(60):
+                if not request.wait(60):
+                    self.widget_mgr.signal.show_error_message.emit(
+                        "Time out waiting for request for launch."
+                    )
+                    return
+
+                if not request.result() is True:
+                    return
+
+            result = self.launch_manager.launch(launch_profile)
+
+            if result.success:
+                self.status_label.setText("Launched!")
+                log_window = ProcessLogWindow(
+                    result.process,
+                    launch_profile.profile_id,
+                    title=f"Minecraft Log - {launch_profile.display_name} ({launch_profile.version_id})",
+                    parent=None,
+                    finished_callback=self.launch_manager.profile_finished,
+                )
+                for warning in result.warnings:
+                    log_window.append_message(f"[launcher warning] {warning}")
+                self.process_log_windows.append(log_window)
+                log_window.show()
+            else:
                 self.widget_mgr.signal.show_error_message.emit(
-                    "Time out waiting for request for launch."
+                    "Unable to launch profile {}: {}".format(
+                        launch_profile.display_name,
+                        result.error_message,
+                    )
                 )
-                return
-
-            if not request.result() is True:
-                return
-
-        result = self.launch_manager.launch(launch_profile)
-
-        if result.success:
-            self.status_label.setText("Launched!")
-            log_window = ProcessLogWindow(
-                result.process,
-                launch_profile.profile_id,
-                title=f"Minecraft Log - {launch_profile.display_name} ({launch_profile.version_id})",
-                parent=None,
-            )
-            for warning in result.warnings:
-                log_window.append_message(f"[launcher warning] {warning}")
-            self.process_log_windows.append(log_window)
-            log_window.show()
-        else:
-            self.widget_mgr.signal.show_error_message.emit(
-                "Unable to launch profile {}: {}".format(
-                    launch_profile.display_name,
-                    result.error_message,
-                )
-            )
+        finally:
+            self.status_label.setText("Select a profile to launch")

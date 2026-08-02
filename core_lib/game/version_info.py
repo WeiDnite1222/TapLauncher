@@ -122,7 +122,7 @@ def get_version_manifest(manifest_url=MOJANG_VERSION_MANIFEST_V2, timeout=10) ->
 
     try:
         data = r.json()
-        logger.debug("VersionManifest: {}".format(json.dumps(data, indent=4)))
+        # logger.debug("VersionManifest: {}".format(json.dumps(data, indent=4)))
         return data
     except ValueError as e:
         raise VersionManifestFetchException(
@@ -180,10 +180,10 @@ def get_all_versions(version_manifest: dict, is_snapshot=False, include_all_type
     filtered = []
 
     for ver in all_vers:
-        ver_id = ver.get("id", None)
+        # ver_id = ver.get("id", None)
         ver_type = ver.get("type")
 
-        logger.debug("Ver: {}, Type: {}".format(ver_id, ver_type))
+        # logger.debug("Ver: {}, Type: {}".format(ver_id, ver_type))
 
         if ver_type == target_type or include_all_type:
             filtered.append(ver)

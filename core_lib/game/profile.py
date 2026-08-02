@@ -9,6 +9,8 @@ import uuid
 from copy import deepcopy
 from pathlib import Path
 
+from PySide6.QtGui import QImage
+
 from core_lib.common.exception import ProfileKeyNotFoundException, ProfileException, ProfileSaveException, \
     ProfileLoadException
 
@@ -434,6 +436,14 @@ def duplicate_profile(profiles: dict, profile_id: str, new_name: str | None=None
     )
 
 def convert_profile_data_to_object(profiles: dict, profile_id: str) -> Profile:
+    """
+    Convert profiles data to object
+    :param profiles:
+    :param profile_id:
+    :return:
+        profiles: dict
+        profile_id: str
+    """
     profile = get_profile(profiles, profile_id)
 
     created: str | datetime.datetime = profile.get("created", datetime.datetime.now())

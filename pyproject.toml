@@ -1,0 +1,29 @@
+[project]
+name = "testlauncher"
+version = "0.0.4a0"
+description = "A lightweight Minecraft launcher."
+readme = "README.md"
+requires-python = ">=3.10"
+authors = [
+    { name = "wei", email = "weidnite1222@gmail.com" },
+]
+dependencies = [
+    "colorlog>=6.9,<7",
+    "keyring>=25.6,<26",
+    "PySide6>=6.8,<7",
+    "requests>=2.32,<3",
+]
+
+[dependency-groups]
+build = [
+    "Nuitka>=4.1",
+    "ordered-set>=4.1",
+    "zstandard>=0.23",
+]
+
+[project.urls]
+Homepage = "https://repo.weispace.net/wei/Launcher"
+Repository = "https://repo.weispace.net/wei/Launcher/"
+
+[tool.uv]
+package = false

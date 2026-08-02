@@ -87,3 +87,27 @@ class ProfileLoadException(LauncherException):
 
 class ProfileKeyNotFoundException(LauncherException):
     user_message = "Specified profile key not found. Profile may corrupted."
+
+class AccountException(LauncherException):
+    user_message = "An error occurred while processing account data."
+
+class AccountSaveException(AccountException):
+    user_message = "Unable to save account data. Try again later."
+
+class AccountLoadException(AccountException):
+    user_message = "Unable to load account data. The account file may be corrupted."
+
+class AccountKeyNotFoundException(AccountException):
+    user_message = "Specified account was not found."
+
+class AuthenticationException(LauncherException):
+    user_message = "Authentication failed."
+
+class AuthenticationConnectException(LauncherException):
+    user_message = "An error occurred while connecting to authentication server."
+
+class AuthenticationSessionException(LauncherException):
+    user_message = "Authentication failed. Session may expire."
+
+class ThirdPartyAPIException(LauncherException):
+    user_message = "An error occurred while fetching third party API."

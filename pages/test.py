@@ -23,7 +23,7 @@ from core_lib.game.version_info import (find_useful_part_in_specific_version_man
                                         download_core_file)
 from core_lib.qt.hack import is_main_thread
 from core_lib.runtime.java import find_java_installations
-from manager.game import ManifestManager
+from manager.game import ManifestManager, JavaManager
 from manager.widgets import SelectPathRequest, AskForRequest
 
 MAX_DOWNLOAD_ATTEMPTS = 3
@@ -37,6 +37,7 @@ class TestPage(QWidget):
         self.parent = parent
         self.widget_mgr = widget_manager
         self.manifest_mgr: ManifestManager = app.game_manager.manifest
+        self.java_mgr: JavaManager = app.game_manager.java
 
         self.resize(800, 600)
         self.setWindowFlags(self.windowFlags() | Qt.WindowType.WindowMaximizeButtonHint)
@@ -781,7 +782,7 @@ class TestPage(QWidget):
                 return
 
             # Use found java runtime (if available)
-            java_path = self.get_support_runtime_jvm_executable(
+            java_path = self.java_mgr.get_support_runtime_jvm_executable(
                 java_major_version,
                 no_error=True
             )

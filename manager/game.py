@@ -8,7 +8,9 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from uuid import uuid4
 from PySide6.QtCore import QObject
+from PySide6.QtWidgets import QInputDialog
 
+from constant import CLIENT_ID, LAUNCHER_VERSION
 from core_lib.common.common import FileObject
 from core_lib.common.exception import VersionManifestFetchException, VersionManifestSaveException, \
     NoSpecifiedVersionKeyException
@@ -20,6 +22,7 @@ from core_lib.game.version_info import fetch_and_save_version_manifest, get_spec
     save_version_manifest, find_useful_part_in_specific_version_manifest, download_core_file, get_latest_version, \
     LATEST_VERSION_ALIASES
 from core_lib.runtime.java import find_java_installations
+from manager.account import AccountManager, LaunchAccount
 from manager.profile import LaunchProfile
 from manager.widgets import SelectPathRequest, AskForRequest
 
@@ -411,11 +414,12 @@ class LaunchResult:
         self.warnings.append(message)
 
 class LaunchManager:
-    def __init__(self, app, manifest_manager: ManifestManager, java_manager: JavaManager):
+    def __init__(self, app, manifest_manager: ManifestManager, java_manager: JavaManager, account_manager: AccountManager):
         self.app = app
         self.manifest_mgr = manifest_manager
         self.widget_mgr = app.widget_manager
         self.java_mgr = java_manager
+        self.account_mgr = account_manager
         self.launched_profiles: list[str] = []
 
     def launch(self, profile: LaunchProfile) -> LaunchResult:
@@ -463,6 +467,15 @@ class LaunchManager:
             if not check_full_libraries_exists(version_manifest, libraries_dir, natives_dir):
                 download_full_libraries(version_manifest, libraries_dir, natives_dir)
 
+            current_account_id = self.account_mgr.get_current_account_id()
+
+            if not current_account_id:
+                return result.fail(
+                    "Select a account before launching."
+                )
+
+            launch_account: LaunchAccount = self.account_mgr.get_launch_account()
+
             # Asset
             default_assets_dir = Path(self.app.work_dir, "assets")
             if not check_assets_exist(version_manifest, default_assets_dir, launcher_root=self.app.work_dir):
@@ -498,19 +511,20 @@ class LaunchManager:
 
             # Mappings
             arg_maps = ArgumentMappings(
-                player_name="Player",
+                player_name=launch_account.player_name,
                 version_name=version_id,
                 game_directory=game_dir.as_posix(),
                 assets_root=assets_dir.as_posix(),
                 legacy_assets_root=assets_dir,
                 assets_index_name=asset_id,
-                auth_uuid="00000000000000000000000000000000",
-                auth_access_token="0",
-                user_type="legacy",
+                auth_uuid=launch_account.minecraft_uuid,
+                auth_access_token=launch_account.access_token,
+                clientid=CLIENT_ID,
+                user_type=launch_account.user_type,
                 version_type=profile.version_type,
                 natives_directory=natives_dir.as_posix(),
                 launcher_name="TestLauncher",
-                launcher_version="0.1",
+                launcher_version=LAUNCHER_VERSION,
                 classpath=classpath,
                 classpath_separator=os.pathsep,
                 library_directory=libraries_dir.as_posix(),
@@ -553,15 +567,18 @@ class LaunchManager:
                     self.app.logger.debug("Use system environment java.")
                     java_path = "java"
 
+            self.app.logger.debug(f"Java executable path is: {java_path}")
+
             # Finally, generate launch command
             cmd = generate_launch_command(
                 arg_maps=arg_maps,
                 main_class=main_class,
                 java_path=java_path,
-                full_args=target_args,
+                full_args=target_args
             )
 
-            self.app.logger.debug(f"Launch command: {cmd}")
+            safe_cmd = ["<access token>" if value == launch_account.access_token else value for value in cmd]
+            self.app.logger.debug(f"Launch command: {safe_cmd}")
 
             # run it
             process = subprocess.Popen(
@@ -588,11 +605,22 @@ class LaunchManager:
     def is_profile_running(self, profile_id):
         return profile_id in self.launched_profiles
 
+    def profile_finished(self, profile_id: str, exit_code: int) -> None:
+        try:
+            self.launched_profiles.remove(profile_id)
+        except ValueError:
+            pass
+
+        self.app.logger.debug(
+            f"Profile {profile_id} exited with code {exit_code}."
+        )
+
 class GameManager(QObject):
     def __init__(self, app, parent=None):
         super(GameManager, self).__init__(parent)
         self.app = app
+        self.account_manager = app.account_manager
         self.widget_mgr = app.widget_manager
         self.manifest = ManifestManager(self.app)
         self.java = JavaManager(self.app)
-        self.launch = LaunchManager(self.app, self.manifest, self.java)
+        self.launch = LaunchManager(self.app, self.manifest, self.java, self.account_manager)

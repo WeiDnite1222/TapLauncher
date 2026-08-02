@@ -1,11 +1,12 @@
+import base64
 from pathlib import Path
 
 from PySide6.QtCore import QCoreApplication, QThread, QSize, Qt
-from PySide6.QtGui import QScreen, QPixmap, QPainter, QPalette, QIcon, QColor
-from PySide6.QtWidgets import QMainWindow, QApplication, QWidget
+from PySide6.QtGui import QScreen, QPixmap, QPainter, QPalette, QIcon, QColor, QImage
+from PySide6.QtWidgets import QMainWindow, QApplication, QWidget, QDialog
 
 
-def move_window_to_center(window: QMainWindow):
+def move_window_to_center(window: QMainWindow | QDialog) -> None:
     main_screen = QApplication.primaryScreen()
     center = QScreen.availableGeometry(main_screen).center()
     geometry = window.frameGeometry()
@@ -101,5 +102,26 @@ def add_icon_padding(icon: QIcon, icon_size=32, padding=6) -> QIcon:
     painter.end()
 
     return QIcon(canvas)
+
+def data_url_to_qt_image(data_url: str) -> QImage:
+    try:
+        header, encoded_data = data_url.split(",", 1)
+    except ValueError:
+        raise ValueError("Not a valid data url")
+
+    if ";base64" not in header:
+        raise ValueError("Unsupported data url. Supported data urls are base64")
+
+    try:
+        image_data = base64.b64decode(encoded_data, validate=True)
+    except ValueError as error:
+        raise ValueError("Invalid image data") from error
+
+    image = QImage.fromData(image_data)
+
+    if image.isNull():
+        raise ValueError("Qt does not support this image")
+
+    return image
 
 # ======================== AI generated END ========================

@@ -1,3 +1,17 @@
+# Nuitka build configuration. The output mode is selected on the command line
+# so the same configuration can be used for both standalone and onefile builds.
+# nuitka-project: --enable-plugin=pyside6
+# nuitka-project: --include-data-dir={MAIN_DIRECTORY}/resources=resources
+# nuitka-project: --output-dir={MAIN_DIRECTORY}/build
+# nuitka-project: --output-filename=TestLauncher
+# nuitka-project: --product-name=TestLauncher
+# nuitka-project: --file-description=TestLauncher Minecraft Launcher
+# nuitka-project: --copyright=Copyright (c) wei
+# nuitka-project: --assume-yes-for-downloads
+# nuitka-project-if: {OS} == "Windows":
+#    nuitka-project: --windows-console-mode=disable
+#    nuitka-project: --windows-icon-from-ico={MAIN_DIRECTORY}/resources/icons/icon.png
+
 import os
 import sys
 import argparse
@@ -50,7 +64,7 @@ def main():
     logging.basicConfig(format=DEFAULT_FORMAT, datefmt=DEFAULT_DATE_FORMAT, level=level)
 
     # Start (the real) launcher
-    app = Launcher(logger)
+    app = Launcher(logger, debug=debug)
     sys.exit(app.exec())
 
 

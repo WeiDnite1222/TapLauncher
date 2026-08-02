@@ -1,2 +1,10 @@
-LAUNCHER_VERSION = "0.0.3-alpha"
+LAUNCHER_VERSION = "0.0.4-alpha"
+LAUNCHER_NAME = "TestLauncher (Aka TapLauncher)"
 MAIN_REPO_URL = "https://repo.weispace.net/wei/Launcher/"
+CLIENT_ID = "30cbb657-edab-4d06-9fb7-cf5734a40088"
+MICROSOFT_VERIFY_ENDPOINT = "https://www.microsoft.com/link"
+LAUNCHER_USER_AGENT = f"{LAUNCHER_NAME}/{LAUNCHER_VERSION} (Powered by request module)"
+
+ACCESS_TOKEN_KEYWORD = "accessToken"
+REFRESH_TOKEN_KEYWORD = "refreshToken"
+SYSTEM_KEYRING_KEYWORD = "SYSTEM_CREDENTIALS"
