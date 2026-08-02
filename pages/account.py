@@ -4,7 +4,7 @@ import webbrowser
 from pathlib import Path
 
 from PySide6.QtCore import QSize, Qt, Signal, QTimer
-from PySide6.QtGui import QPixmap, QFontDatabase
+from PySide6.QtGui import QPixmap, QFontDatabase, QIcon
 from PySide6.QtWidgets import (
     QHBoxLayout,
     QLabel,
@@ -14,7 +14,7 @@ from PySide6.QtWidgets import (
     QMessageBox,
     QPushButton,
     QVBoxLayout,
-    QWidget, QDialog, QLineEdit, QApplication,
+    QWidget, QDialog, QLineEdit, QApplication, QToolButton,
 )
 
 from constant import CLIENT_ID, MICROSOFT_VERIFY_ENDPOINT
@@ -192,6 +192,8 @@ class AccountPage(QWidget):
         layout.addLayout(main_layout, 1)
         layout.addLayout(right_layout)
 
+        self.related_button : QToolButton = None
+
         self.account_manager.accounts_changed.connect(self._render_accounts)
         self.account_manager.current_account_changed.connect(self._current_account_changed)
         self.account_manager.login_signal.device_code_ready.connect(self._show_device_code)
@@ -200,6 +202,39 @@ class AccountPage(QWidget):
         self.account_manager.login_signal.finished.connect(self._login_finished)
         self.account_manager.head_signal.updated.connect(self._account_head_updated)
         self._render_accounts()
+
+    def set_related_button(self, button: QToolButton):
+        self.related_button = button
+        self._update_related_button(None)
+
+    def _update_related_button(self, account_id: str | None):
+        """
+        Update related button's icon to current (active) account avatar
+        :param account_id:
+        :return:
+        """
+        if self.related_button is None:
+            return
+
+        if account_id is None:
+            account_id = self.account_manager.get_current_account_id()
+
+        if not self.account_manager.is_current_account(account_id):
+            return
+
+        account = self.account_manager.get_account(account_id)
+        if account is None:
+            self.related_button.setIcon(
+                self.app.get_icon(Path(self.app.icon_dir, "head.png"), True)
+            )
+            return
+
+        pixmap = self.account_manager.get_head_pixmap(
+            account.avatar,
+            QSize(32, 32),
+        )
+        # Apply avatar to open account page button
+        self.related_button.setIcon(QIcon(pixmap))
 
     def _render_accounts(self):
         self.account_list.clear()
@@ -254,10 +289,14 @@ class AccountPage(QWidget):
                 continue
             widget = self.account_list.itemWidget(item)
             if isinstance(widget, AccountWidget):
+                pixmap = self.account_manager.get_head_pixmap(account.avatar, QSize(32, 32))
                 widget.head_icon_label.setPixmap(
-                    self.account_manager.get_head_pixmap(account.avatar, QSize(32, 32))
+                    pixmap,
                 )
+
             break
+
+        self._update_related_button(account_id)
 
     def _delete_account(self, account_id: str):
         if self.account_manager.remove_account(account_id):

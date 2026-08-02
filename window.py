@@ -199,6 +199,8 @@ class LauncherMainWindow(QMainWindow):
 
         # Account btn (will be moved to the bottom (or last one item) of the toolbar
         self.open_account_page = self.toolbar.add_button(icon=self.app.get_icon(Path(self.app.icon_dir, "head.png"), True))
+        self.account_page.set_related_button(self.open_account_page) # AccountPage require this to set button icon to
+        # current account's avatar
 
         # Profile btn
         self.open_create_profile_page = self.toolbar.add_button(icon=self.app.get_icon(Path(self.app.icon_dir, "add_temp.png")))

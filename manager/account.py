@@ -591,6 +591,9 @@ class AccountManager(QObject):
         account_id = self.get_current_account_id()
         return self.get_account(account_id) if account_id is not None else None
 
+    def is_current_account(self, account_id: str | None) -> bool:
+        return self.get_current_account_id() == account_id
+
     def get_launch_account(self, account_id: str | None = None) -> LaunchAccount | None:
         """
         Get launch used account.
