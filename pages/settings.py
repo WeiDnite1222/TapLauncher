@@ -9,8 +9,10 @@ from PySide6.QtWidgets import (
     QSlider,
     QStackedWidget,
     QVBoxLayout,
-    QWidget, QLineEdit,
+    QWidget, QLineEdit, QPlainTextEdit,
 )
+
+from constant import LAUNCHER_NAME, LAUNCHER_DESCRIPTION, LAUNCHER_VERSION
 
 
 class SettingsItem(QPushButton):
@@ -172,11 +174,13 @@ class SettingsPage(QWidget):
         self.general_page = self.create_general_page()
         self.appearance_page = self.create_appearance_page()
         self.profile_page = self.create_profile_page()
+        self.about_page = self.create_about_page()
 
         self.stack.addWidget(self.main_page)
         self.stack.addWidget(self.general_page)
         self.stack.addWidget(self.appearance_page)
         self.stack.addWidget(self.profile_page)
+        self.stack.addWidget(self.about_page)
 
         root_layout.addWidget(self.stack)
 
@@ -224,12 +228,21 @@ class SettingsPage(QWidget):
             lambda: self.open_page(self.profile_page)
         )
 
+        about_button = SettingsItem(
+            "About",
+            "About the launcher",
+        )
+        about_button.clicked.connect(
+            lambda: self.open_page(self.about_page)
+        )
+
         layout.addWidget(title)
         layout.addSpacing(8)
         layout.addWidget(info_button)
         layout.addWidget(general_button)
         layout.addWidget(appearance_button)
         layout.addWidget(profile_button)
+        layout.addWidget(about_button)
         layout.addStretch()
 
         return page
@@ -286,6 +299,25 @@ class SettingsPage(QWidget):
         test_label = QLabel("Still in development...")
 
         page.content_layout.addWidget(test_label)
+
+        return page
+
+    def create_about_page(self) -> QWidget:
+        page = SettingsSubPage("About", self.go_back)
+
+        brand_label = QLabel(LAUNCHER_NAME)
+        brand_label.setStyleSheet("QLabel { font-size: 20px; }")
+
+        version_label = QLabel("Version: {}".format(LAUNCHER_VERSION))
+        version_label.setStyleSheet("QLabel { font-size: 12px; }")
+
+        text = QPlainTextEdit(LAUNCHER_DESCRIPTION)
+        text.setStyleSheet("QPlainTextEdit { font-size: 13px; }")
+        text.setReadOnly(True)
+
+        page.content_layout.addWidget(brand_label)
+        page.content_layout.addWidget(version_label)
+        page.content_layout.addWidget(text)
 
         return page
 

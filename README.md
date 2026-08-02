@@ -36,5 +36,5 @@ uv run python main.py --work-dir
 ## Troubleshooting
 #### Unable to log in Microsoft account. Launcher throw error "Signing in to Minecraft services failed (HTTP 403). This account is not allowed to complete this step. Check Xbox privacy settings and account restrictions. Or check the client id has authorized to use Minecraft API."
 
-This launcher's client id haven't registered to [Minecraft API](https://forms.cloud.microsoft/Pages/ResponsePage.aspx?id=v4j5cvGGr0GRqy180BHbR-ajEQ1td1ROpz00KtS8Gd5UNVpPTkVLNFVROVQxNkdRMEtXVjNQQjdXVC4u).
+This launcher's client id haven't registered to [Minecraft API](https://api.minecraftservices.com/).
 You may need to replace the client id that has permission to access Minecraft API in settings page (Settings>Account>Client ID)

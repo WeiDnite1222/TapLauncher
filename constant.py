@@ -9,7 +9,8 @@ ACCESS_TOKEN_KEYWORD = "accessToken"
 REFRESH_TOKEN_KEYWORD = "refreshToken"
 SYSTEM_KEYRING_KEYWORD = "SYSTEM_CREDENTIALS"
 
-LAUNCHER_DESCRIPTION = """
-An unofficial Minecraft launcher written in Python. It aims to maintain maximum compatibility with the official Minecraft
+LAUNCHER_DESCRIPTION = """An unofficial Minecraft launcher written in Python. It aims to maintain maximum compatibility with the official Minecraft
 Launcher while being more lightweight and easier to use.
+
+This launcher is not associated with Mojang Studios or Microsoft. Is a personal project that just for fun.
 """
