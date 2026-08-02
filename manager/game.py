@@ -494,9 +494,9 @@ class LaunchManager:
                 except Exception as e:
                     self.widget_mgr.download_signal.failed.emit(task_id, str(e))
                     result.add_warning(
-                        "Some assets were not downloaded. Although is not necessary for launching game."
-                        " But it may cause some texture issue when you playing. (Such as missing textures)"
-                        " Try relaunching to automatic redownload assets."
+                        "Some assets could not be downloaded. They are not required to launch the game,"
+                        " but missing assets may cause texture issues while you play."
+                        " Try relaunching to download them automatically."
                     )
                 else:
                     self.widget_mgr.download_signal.finished.emit(task_id)

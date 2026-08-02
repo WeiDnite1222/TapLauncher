@@ -1,5 +1,5 @@
 [project]
-name = "testlauncher(taplauncher)"
+name = "testlauncher"
 version = "0.0.4a0"
 description = "A lightweight Minecraft launcher."
 readme = "README.md"
@@ -19,6 +19,7 @@ build = [
     "Nuitka>=4.1",
     "ordered-set>=4.1",
     "zstandard>=0.23",
+    "imageio>=2.37.0"
 ]
 
 [project.urls]

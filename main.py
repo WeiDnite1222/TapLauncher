@@ -29,8 +29,8 @@ def main():
     # parse arguments
     parser = argparse.ArgumentParser()
     parser.add_argument("-m", "--mode", choices=['lightweight', 'full', 'choice'], default='choice',
-                        help="Select mode (lightweight for tui, full is gui,"
-                             "choice for a mode select window) (TUI is not implemented)", required=False)
+                        help="Select a mode (lightweight for TUI, full for GUI, or choice to open a mode-selection window). "
+                             "TUI is not implemented yet.", required=False)
     parser.add_argument("-d", "--debug", action="store_true",
                         help="Enable debug mode", default=False)
     parser.add_argument("-wd", "--work-dir", default=os.getcwd(), help="Work directory")

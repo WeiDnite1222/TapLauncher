@@ -8,3 +8,8 @@ LAUNCHER_USER_AGENT = f"{LAUNCHER_NAME}/{LAUNCHER_VERSION} (Powered by request m
 ACCESS_TOKEN_KEYWORD = "accessToken"
 REFRESH_TOKEN_KEYWORD = "refreshToken"
 SYSTEM_KEYRING_KEYWORD = "SYSTEM_CREDENTIALS"
+
+LAUNCHER_DESCRIPTION = """
+An unofficial Minecraft launcher written in Python. It aims to maintain maximum compatibility with the official Minecraft
+Launcher while being more lightweight and easier to use.
+"""

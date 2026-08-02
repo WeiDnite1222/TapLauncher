@@ -111,7 +111,8 @@ class LauncherMainWindow(QMainWindow):
 
         # center message (will be deleted if launcher finished development)
         content = """Still digging!"""
-        message = "If you found that something might be a issue. You can report it to the main repo! Any suggestion are welcome."
+        message = ("If you find an issue, you can report it in the main repository. "
+                   "Suggestions are always welcome!")
         self.icon_label = QLabel()
         self.icon_label.setObjectName("icon_label")
         self.dev_info_box = QLabel(content)

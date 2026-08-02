@@ -269,8 +269,8 @@ def collect_runtime_files(manifest: dict, runtime_dir: Path, max_workers=RUNTIME
 
     if not use_raw:
         logger.warning(
-            "Flag \"raw\" is not enabled. But the launcher haven't implemented support for compressed files."
-            "You will likely to decompress all files before use them."
+            "The \"raw\" flag is not enabled, but the launcher does not support compressed files yet. "
+            "You will likely need to decompress all files before using them."
         )
 
     return result_executables, result_files, result_dirs

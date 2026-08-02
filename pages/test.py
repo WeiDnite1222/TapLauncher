@@ -597,8 +597,8 @@ class TestPage(QWidget):
                     f"{len(fails)} asset files failed to download.",
                 )
                 self.widget_mgr.signal.show_warning_message.emit(
-                    "Some assets were not downloaded. Although is not necessary for launching game."
-                    " But it may cause some texture issue when you playing. (Such as missing textures)"
+                    "Some assets could not be downloaded. They are not required to launch the game,"
+                    " but missing assets may cause texture issues while you play."
                 )
             else:
                 self.widget_mgr.download_signal.log.emit(
