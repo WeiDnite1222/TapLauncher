@@ -667,13 +667,13 @@ class ProfileManager(QObject):
         if not isinstance(request.icon, str):
             errors["icon"] = "Icon must be a string."
 
-        if request.game_dir is not _UNSET:
+        if request.game_dir is not _UNSET and request.game_dir is not None:
             try:
                 Path(request.game_dir)
             except (TypeError, ValueError):
                 errors["game_dir"] = "Game directory is invalid."
 
-        if request.game_dir is not _UNSET:
+        if request.resolution is not _UNSET and request.resolution is not None:
             if not isinstance(request.resolution, tuple) or len(request.resolution) != 2:
                 errors["resolution"] = (
                     "Resolution must contain width and height."

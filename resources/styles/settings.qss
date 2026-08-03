@@ -1,0 +1,84 @@
+QWidget#settingsPage,
+QWidget#settingsMainPage,
+QWidget#settingsScrollContent {
+    background-color: palette(window);
+}
+
+QScrollArea#settingsScrollArea {
+    border: none;
+    background-color: palette(window);
+}
+
+QScrollArea#settingsScrollArea > QWidget > QWidget {
+    background-color: palette(window);
+}
+
+QLabel#settingsPageTitle {
+    font-size: 18pt;
+    font-weight: bold;
+}
+
+QPushButton#settingsItem {
+    min-height: 68px;
+    border: 1px solid palette(mid);
+    border-radius: 8px;
+    background-color: palette(button);
+    text-align: left;
+}
+
+QPushButton#settingsItem:hover {
+    background-color: palette(midlight);
+}
+
+QPushButton#settingsItem:pressed {
+    background-color: palette(dark);
+}
+
+QLabel#settingsItemTitle {
+    color: palette(button-text);
+    font-size: 11pt;
+    font-weight: bold;
+}
+
+QLabel#settingsItemDescription {
+    color: palette(placeholder-text);
+    font-size: 9pt;
+}
+
+QLabel#settingsHelpText {
+    color: palette(placeholder-text);
+    font-size: 9pt;
+}
+
+QPushButton#settingsBackButton {
+    border: none;
+    border-radius: 8px;
+    background-color: transparent;
+    font-size: 22px;
+}
+
+QPushButton#settingsBackButton:hover {
+    background-color: palette(button);
+}
+
+QPushButton#settingsBackButton:pressed {
+    background-color: palette(midlight);
+}
+
+QLabel#settingsSubPageTitle {
+    font-size: 15pt;
+    font-weight: bold;
+}
+
+QLabel#settingsBrand {
+    font-size: 20px;
+    font-weight: bold;
+}
+
+QLabel#settingsVersion {
+    font-size: 12px;
+}
+
+QPlainTextEdit#settingsDescription {
+    font-size: 13px;
+}

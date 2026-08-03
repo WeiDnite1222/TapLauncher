@@ -16,6 +16,7 @@ from manager.widgets import AskForRequest, SelectPathRequest
 from pages.account import AccountPage
 from pages.create_profile  import CreateProfilePage
 from pages.launch_profile import LaunchProfilePage
+from pages.manage_profile import ManageProfilePage
 from pages.test import TestPage
 from pages.settings import SettingsPage
 
@@ -163,6 +164,9 @@ class LauncherMainWindow(QMainWindow):
         # Profile page
         self.create_profile_page = CreateProfilePage(self.app, self)
 
+        # Profile management page
+        self.manage_profile_page = ManageProfilePage(self.app, self)
+
         # Settings page
         self.settings_page = SettingsPage(self.app, self)
 
@@ -172,6 +176,7 @@ class LauncherMainWindow(QMainWindow):
         self.central.addWidget(self.account_page)
         self.central.addWidget(self.settings_page)
         self.central.addWidget(self.create_profile_page)
+        self.central.addWidget(self.manage_profile_page)
         self.central.addWidget(self.launch_profile_page)
 
         # Bind toolbar and center widget
@@ -193,24 +198,32 @@ class LauncherMainWindow(QMainWindow):
                                                                 icon=self.app.get_icon(Path(self.app.icon_dir, "profile_default.png"), True))
 
         # Home btn
-        self.home_button = self.toolbar.add_button(icon=self.app.get_icon(Path(self.app.icon_dir, "home.png")))
+        self.home_button = self.toolbar.add_button(" Home", icon=self.app.get_icon(Path(self.app.icon_dir, "home.png")))
 
         # Settings btn (will be moved to the bottom of the toolbar)
-        self.open_settings_page = self.toolbar.add_button(icon=self.app.get_icon(Path(self.app.icon_dir, "settings.png")))
+        self.open_settings_page = self.toolbar.add_button(" Settings", icon=self.app.get_icon(Path(self.app.icon_dir, "settings.png")))
 
         # Account btn (will be moved to the bottom (or last one item) of the toolbar
-        self.open_account_page = self.toolbar.add_button(icon=self.app.get_icon(Path(self.app.icon_dir, "head.png"), True))
+        self.open_account_page = self.toolbar.add_button(" Accounts", icon=self.app.get_icon(Path(self.app.icon_dir, "head.png"), True))
         self.account_page.set_related_button(self.open_account_page) # AccountPage require this to set button icon to
         # current account's avatar
 
         # Profile btn
-        self.open_create_profile_page = self.toolbar.add_button(icon=self.app.get_icon(Path(self.app.icon_dir, "add.png")))
+        self.open_create_profile_page = self.toolbar.add_button("Create Profile",
+                                                                icon=self.app.get_icon(Path(self.app.icon_dir, "add.png")))
+
+        # manage profile
+        self.open_manage_profile_page = self.toolbar.add_button(
+            " Manage Profiles",
+            icon=self.app.get_icon(Path(self.app.icon_dir, "profile_edit.png"), True),
+        )
 
         # Bind tool buttons
         self.toolbar.addWidget(self.home_button)
         self.toolbar.addWidget(self.open_test_page)
         self.toolbar.addWidget(self.open_create_profile_page)
         self.toolbar.addWidget(self.open_launch_profile_page)
+        self.toolbar.addWidget(self.open_manage_profile_page)
         self.toolbar.setMovable(True)
         self.toolbar.setFloatable(False)
         self.toolbar.setAllowedAreas(Qt.ToolBarArea.AllToolBarAreas)
@@ -243,6 +256,10 @@ class LauncherMainWindow(QMainWindow):
 
         self.open_create_profile_page.clicked.connect(
             lambda: self.set_current_page(self.create_profile_page, self.open_create_profile_page)
+        )
+
+        self.open_manage_profile_page.clicked.connect(
+            lambda: self.set_current_page(self.manage_profile_page, self.open_manage_profile_page)
         )
 
         # Bind signal event

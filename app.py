@@ -46,7 +46,7 @@ class Launcher(QApplication, LauncherObject):
         self.game_manager = GameManager(self)
 
         # Window config
-        self.setApplicationName("TestLauncher")
+        self.setApplicationName("TapLauncher")
         self.main_window = LauncherMainWindow(
             app=self
         )
@@ -139,7 +139,8 @@ class Launcher(QApplication, LauncherObject):
 
     @property
     def default_game_dir(self) -> Path:
-        return self.work_dir / "minecraft" if sys.platform.lower() == "darwin" else self.work_dir / ".minecraft"
+        # Completely with official Minecraft launcher
+        return self.work_dir
 
     @property
     def resources_dir(self):
