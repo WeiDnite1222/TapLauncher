@@ -1,6 +1,7 @@
 import json
 import os
 import subprocess
+import sys
 import threading
 import time
 import traceback
@@ -863,6 +864,11 @@ class LaunchManager:
                 cwd=game_dir,
                 stdout=subprocess.PIPE,
                 stderr=subprocess.PIPE,
+                creationflags=(
+                    subprocess.CREATE_NO_WINDOW
+                    if sys.platform == "win32"
+                    else 0
+                ),
                 text=True,
                 encoding="utf-8",
                 errors="replace",

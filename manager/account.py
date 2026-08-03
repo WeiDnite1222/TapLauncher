@@ -11,7 +11,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 
 import keyring
-from PySide6.QtCore import QObject, Signal, QThread, QSize, Qt
+from PySide6.QtCore import QObject, Signal, QThread, QTimer, QSize, Qt
 from PySide6.QtGui import QPixmap, QImage
 from PySide6.QtWidgets import QMessageBox
 from keyring.errors import KeyringError, PasswordDeleteError
@@ -36,7 +36,8 @@ from core_lib.game.account import (
     update_account as update_account_raw,
 )
 from core_lib.game.authentication import get_xbox_token_and_user_hash, get_microsoft_token, get_xsts_token, \
-    get_minecraft_access_token, get_account_entitlements, get_minecraft_profile, has_minecraft_license, get_device_code
+    get_minecraft_access_token, get_account_entitlements, get_minecraft_profile, has_minecraft_license, \
+    get_device_code, refresh_microsoft_token
 from core_lib.game.third_party import get_minecraft_head
 from core_lib.qt.hack import data_url_to_qt_image
 from manager.widgets import AskForRequest
@@ -150,6 +151,11 @@ class AccountManager(QObject):
     current_account_changed = Signal(object)  # str | None
     error_occurred = Signal(str, str)
     replace_relative_path = Signal(str)
+    token_refreshed = Signal(str)
+    token_refresh_failed = Signal(str, str)
+
+    TOKEN_REFRESH_INTERVAL_MS = 5 * 60 * 1000
+    TOKEN_REFRESH_MARGIN = datetime.timedelta(minutes=10)
 
     def __init__(self, app, widget_manager):
         super().__init__(app)
@@ -164,6 +170,13 @@ class AccountManager(QObject):
         self.login_signal = LoginSignal(self)
         self.login_thread: QThread | None = None
         self.login_worker: LoginWorker | None = None
+
+        # Refresh expiring credentials without blocking the GUI thread.
+        self._refresh_timer = QTimer(self)
+        self._refresh_timer.setInterval(self.TOKEN_REFRESH_INTERVAL_MS)
+        self._refresh_timer.timeout.connect(self.refresh_expiring_tokens)
+        self._refresh_thread: QThread | None = None
+        self._refresh_worker: TokenRefreshWorker | None = None
 
         # Account head downloads. Keep thread and worker references alive until
         # QThread.finished so Qt does not destroy a running thread.
@@ -250,6 +263,8 @@ class AccountManager(QObject):
             self._path = path
             self._is_modified = False
             self.accounts_changed.emit()
+
+            self.start_token_refresh_daemon()
 
             return True, copy.deepcopy(result) if return_value else None
         except (AccountException, AccountLoadException) as exc:
@@ -910,6 +925,93 @@ class AccountManager(QObject):
     #
     # Account Login, Refresh, API Handle
     #
+    @staticmethod
+    def _as_utc_datetime(value: str | datetime.datetime) -> datetime.datetime | None:
+        try:
+            if isinstance(value, str):
+                value = datetime.datetime.fromisoformat(value.replace("Z", "+00:00"))
+            if not isinstance(value, datetime.datetime):
+                return None
+            if value.tzinfo is None:
+                value = value.replace(tzinfo=datetime.timezone.utc)
+            return value.astimezone(datetime.timezone.utc)
+        except ValueError:
+            return None
+
+    def start_token_refresh_daemon(self) -> None:
+        """Start periodic token checks and perform an initial check immediately."""
+        if not self._refresh_timer.isActive():
+            self._refresh_timer.start()
+        QTimer.singleShot(0, self.refresh_expiring_tokens)
+
+    def stop_token_refresh_daemon(self) -> None:
+        self._refresh_timer.stop()
+
+    def refresh_expiring_tokens(self) -> bool:
+        """Refresh one expiring MSA account; later accounts run on following ticks."""
+        if self._refresh_thread is not None or not self.is_loaded:
+            return False
+
+        deadline = datetime.datetime.now(datetime.timezone.utc) + self.TOKEN_REFRESH_MARGIN
+        for summary in self.list_accounts():
+            if summary.account_type != "msa":
+                continue
+            account = self.get_account(summary.id)
+            if account is None:
+                continue
+            expires_at = self._as_utc_datetime(account.access_token_expires_at)
+            if expires_at is not None and expires_at > deadline:
+                continue
+
+            refresh_token = account.refresh_token
+            if refresh_token == SYSTEM_KEYRING_KEYWORD and self.use_system_keyring:
+                refresh_token = self.get_token(account.id, REFRESH_TOKEN_KEYWORD)
+            if not refresh_token or refresh_token == SYSTEM_KEYRING_KEYWORD:
+                self.app.logger.warning("Cannot refresh account %s: refresh token is missing", account.id)
+                continue
+
+            self._refresh_thread = QThread(self)
+            self._refresh_worker = TokenRefreshWorker(account.id, refresh_token, CLIENT_ID)
+            self._refresh_worker.moveToThread(self._refresh_thread)
+            self._refresh_thread.started.connect(self._refresh_worker.run)
+            self._refresh_worker.succeeded.connect(self._token_refresh_succeeded)
+            self._refresh_worker.failed.connect(self._token_refresh_failed)
+            self._refresh_worker.finished.connect(self._refresh_thread.quit)
+            self._refresh_worker.finished.connect(self._refresh_worker.deleteLater)
+            self._refresh_thread.finished.connect(self._token_refresh_finished)
+            self._refresh_thread.start()
+            return True
+        return False
+
+    def _token_refresh_succeeded(self, account_id: str, result: dict) -> None:
+        if not self.contains(account_id):
+            return
+        updated = self.update_account(
+            account_id,
+            UpdateAccountRequest(
+                access_token=result["access_token"],
+                refresh_token=result["refresh_token"],
+                access_token_expires_at=result["access_token_expires_at"],
+                refresh_token_expires_at=result["refresh_token_expires_at"],
+            ),
+        )
+        if updated and self.save():
+            self.app.logger.info("Refreshed token for account %s", account_id)
+            self.token_refreshed.emit(account_id)
+        else:
+            self._token_refresh_failed(account_id, "Unable to persist refreshed credentials")
+
+    def _token_refresh_failed(self, account_id: str, message: str) -> None:
+        self.app.logger.warning("Unable to refresh token for account %s: %s", account_id, message)
+        self.token_refresh_failed.emit(account_id, message)
+
+    def _token_refresh_finished(self) -> None:
+        thread = self._refresh_thread
+        self._refresh_worker = None
+        self._refresh_thread = None
+        if thread is not None:
+            thread.deleteLater()
+
     def start_login(self, client_id: str = CLIENT_ID):
         if self.login_thread is not None:
             return False
@@ -1193,5 +1295,55 @@ class LoginWorker(QObject):
             self.login_failed.emit(str(exc))
         except Exception as exc:
             self.login_failed.emit(f"Unexpected authentication error: {exc}")
+        finally:
+            self.finished.emit()
+
+
+class TokenRefreshWorker(QObject):
+    """
+    A simple token refresh worker.
+
+    Refresh the complete Minecraft credential chain in a background thread.
+    """
+
+    succeeded = Signal(str, dict)
+    failed = Signal(str, str)
+    finished = Signal()
+
+    def __init__(self, account_id: str, refresh_token: str, client_id: str):
+        super().__init__()
+        self.account_id = account_id
+        self.refresh_token = refresh_token
+        self.client_id = client_id
+
+    def run(self) -> None:
+        try:
+            microsoft_token, refresh_token, microsoft = refresh_microsoft_token(
+                self.client_id, self.refresh_token
+            )
+            xbox_token, user_hash, _ = get_xbox_token_and_user_hash(microsoft_token)
+            xsts_token, _ = get_xsts_token(xbox_token)
+            minecraft_token, minecraft = get_minecraft_access_token(user_hash, xsts_token)
+
+            now = datetime.datetime.now(datetime.timezone.utc)
+            try:
+                expires_in = max(0, int(minecraft.get("expires_in", 86400)))
+            except (TypeError, ValueError):
+                expires_in = 86400
+            try:
+                refresh_expires_in = max(0, int(microsoft.get("refresh_token_expires_in", 90 * 86400)))
+            except (TypeError, ValueError):
+                refresh_expires_in = 90 * 86400
+
+            self.succeeded.emit(self.account_id, {
+                "access_token": minecraft_token,
+                "refresh_token": refresh_token,
+                "access_token_expires_at": now + datetime.timedelta(seconds=expires_in),
+                "refresh_token_expires_at": now + datetime.timedelta(seconds=refresh_expires_in),
+            })
+        except LauncherException as exc:
+            self.failed.emit(self.account_id, exc.user_message)
+        except Exception as exc:
+            self.failed.emit(self.account_id, str(exc))
         finally:
             self.finished.emit()

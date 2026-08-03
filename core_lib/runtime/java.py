@@ -26,6 +26,11 @@ def get_java_version(java_executable_path: str | Path) -> tuple[int, str]:
             [java_executable_path, "-version"],
             stdout=subprocess.PIPE,
             stderr=subprocess.PIPE,
+            creationflags=(
+                subprocess.CREATE_NO_WINDOW
+                if sys.platform == "win32"
+                else 0
+            ),
             text=True,
             encoding="utf-8",
             errors="replace",

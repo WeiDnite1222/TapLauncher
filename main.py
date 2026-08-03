@@ -3,10 +3,10 @@
 # nuitka-project: --enable-plugin=pyside6
 # nuitka-project: --include-data-dir={MAIN_DIRECTORY}/resources=resources
 # nuitka-project: --output-dir={MAIN_DIRECTORY}/build
-# nuitka-project: --output-filename=TestLauncher
-# nuitka-project: --product-name=TestLauncher
-# nuitka-project: --file-description=TestLauncher Minecraft Launcher
-# nuitka-project: --copyright=Copyright (c) wei
+# nuitka-project: --output-filename=launcher
+# nuitka-project: --product-name=TapLauncher
+# nuitka-project: --file-description=A Minecraft Launcher
+# nuitka-project: --copyright=Copyright (c) Wei's Garage
 # nuitka-project: --assume-yes-for-downloads
 # nuitka-project-if: {OS} == "Windows":
 #    nuitka-project: --windows-console-mode=disable
@@ -63,7 +63,7 @@ def main():
         else:
             try:
                 # Use user application data directory
-                work_dir = user_data_dir(LAUNCHER_DIR_NAME, appauthor=False)
+                work_dir = user_data_dir(LAUNCHER_DIR_NAME, appauthor=False, roaming=True)
                 os.makedirs(work_dir, exist_ok=True)
             except Exception as e:
                 logger.warning("Failed to get application directory: %s", e)
