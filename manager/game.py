@@ -4,7 +4,6 @@ import subprocess
 import threading
 import time
 import traceback
-import types
 from collections.abc import Callable
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -671,6 +670,7 @@ class LaunchManager:
         self.java_mgr = java_manager
         self.game_file_mgr = game_file_manager
         self.account_mgr = account_manager
+        self.launching_profiles: set[str] = set()
         self.launched_profiles: list[str] = []
         self.signal = self.LaunchSignal()
 
@@ -879,11 +879,19 @@ class LaunchManager:
 
         return result
 
-    def start_launch_task(self, profile: LaunchProfile) -> Thread:
+    def start_launch_task(self, profile: LaunchProfile) -> Thread | None:
         def worker():
             result = self.launch(profile)
             self.signal.finished.emit(profile, result)
             return result
+
+        profile_id = profile.profile_id
+
+        # Check if profile is in launching process
+        if profile_id in self.launching_profiles:
+            return None
+
+        self.launching_profiles.add(profile_id)
 
         thread = threading.Thread(
             target=worker,
@@ -893,8 +901,11 @@ class LaunchManager:
         thread.start()
         return thread
 
-    def is_profile_running(self, profile_id):
-        return profile_id in self.launched_profiles
+    def is_profile_running(self, profile_id: str) -> bool:
+        return (
+                profile_id in self.launching_profiles
+                or profile_id in self.launched_profiles
+        )
 
     def profile_finished(self, profile_id: str, exit_code: int) -> None:
         try:

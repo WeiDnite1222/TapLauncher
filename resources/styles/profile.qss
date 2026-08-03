@@ -23,7 +23,7 @@ QLabel#profileArrow {
     font-size: 18px;
 }
 QFrame#profilePopup {
-    background: palette(mid);
+/*    background: palette(mid);*/
     border: 1px solid palette(midlight);
     border-radius: 5px;
 }
@@ -32,6 +32,7 @@ QPushButton#profileItem {
     background: transparent;
     border: none;
     text-align: left;
+    border-radius: 5px;
 }
 
 QPushButton#profileItem:hover {

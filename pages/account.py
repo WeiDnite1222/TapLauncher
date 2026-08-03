@@ -17,10 +17,11 @@ from PySide6.QtWidgets import (
     QWidget, QDialog, QLineEdit, QApplication, QToolButton,
 )
 
-from constant import CLIENT_ID, MICROSOFT_VERIFY_ENDPOINT
+from constant import MICROSOFT_VERIFY_ENDPOINT
 
 from core_lib.qt.hack import move_window_to_center
 from manager.account import AccountManager, AccountSummary
+from manager.settings_models import AccountSettings
 
 
 class AccountWidget(QWidget):
@@ -162,7 +163,6 @@ class AccountPage(QWidget):
         self.app = app
         self.widget_manager = app.widget_manager
         self.account_manager: AccountManager = app.account_manager
-        self.client_id = CLIENT_ID
 
         self.login_dialog = None
 
@@ -343,7 +343,8 @@ class AccountPage(QWidget):
         self.login_dialog.rejected.connect(self.account_manager.cancel_login)
         self.login_dialog.show()
 
-        self.account_manager.start_login()
+        account_settings = self.app.settings_manager.get("account", AccountSettings)
+        self.account_manager.start_login(str(account_settings.client_id))
 
     def _show_device_code(self, device: dict):
         self._verification_uri = device.get("verification_uri", MICROSOFT_VERIFY_ENDPOINT)

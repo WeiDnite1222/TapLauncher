@@ -910,13 +910,13 @@ class AccountManager(QObject):
     #
     # Account Login, Refresh, API Handle
     #
-    def start_login(self):
+    def start_login(self, client_id: str = CLIENT_ID):
         if self.login_thread is not None:
             return False
 
         # Create login worker and run it in outer thread
         self.login_thread = QThread(self)
-        self.login_worker = LoginWorker(CLIENT_ID)
+        self.login_worker = LoginWorker(client_id)
         self.login_worker.moveToThread(self.login_thread)
 
         self.login_worker.device_code_ready.connect(

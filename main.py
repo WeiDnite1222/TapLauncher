@@ -71,9 +71,10 @@ def main():
                 sys.exit(-1)
     else:
         # check workdir
-        logger.error("Work directory '%s' does not exist." % work_dir)
-        show_error(f"Specified work directory \"{work_dir}\" does not exist or is not a directory.")
-        sys.exit(-1)
+        if not os.path.exists(work_dir) or not os.path.isdir(work_dir):
+            logger.error("Work directory '%s' does not exist." % work_dir)
+            show_error(f"Specified work directory \"{work_dir}\" does not exist or is not a directory.")
+            sys.exit(-1)
 
     if os.getcwd() != args.work_dir:
         os.chdir(work_dir)

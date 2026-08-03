@@ -1,328 +1,275 @@
-from PySide6.QtCore import Qt, Signal
-from PySide6.QtGui import QPalette, QFont
+from pathlib import Path
+
+from PySide6.QtCore import Qt
 from PySide6.QtWidgets import (
-    QCheckBox,
     QComboBox,
     QHBoxLayout,
     QLabel,
+    QLineEdit,
+    QMessageBox,
+    QPlainTextEdit,
     QPushButton,
-    QSlider,
     QStackedWidget,
     QVBoxLayout,
-    QWidget, QLineEdit, QPlainTextEdit,
+    QWidget, QScrollArea,
 )
 
-from constant import LAUNCHER_NAME, LAUNCHER_DESCRIPTION, LAUNCHER_VERSION
+from constant import LAUNCHER_DESCRIPTION, LAUNCHER_NAME, LAUNCHER_VERSION
+from manager.settings_models import AccountSettings, AppearanceSettings, GeneralSettings
+
+
+LANGUAGE_LABELS = {
+    "en": "English",
+    "zh-TW": "Chinese (Traditional)",
+}
+THEME_LABELS = {
+    "system": "Follow system settings",
+    "light": "Light",
+    "dark": "Dark",
+}
 
 
 class SettingsItem(QPushButton):
-    """
-    A modern look settings button.
-    """
-    clicked_page = Signal()
-
-    def __init__(self, title: str, description: str = ""):
+    def __init__(self, title: str, description: str = "") -> None:
         super().__init__()
-
+        self.setObjectName("settingsItem")
         self.setCursor(Qt.CursorShape.PointingHandCursor)
-        # Widget size
-        self.setMinimumHeight(68)
-        self.setMaximumWidth(800)
 
-        # Layout
         layout = QVBoxLayout(self)
         layout.setContentsMargins(16, 10, 16, 10)
         layout.setSpacing(3)
 
-        # Widgets
-        self.title_label = QLabel(title)
-        self.title_label.setAttribute(
-            Qt.WidgetAttribute.WA_TransparentForMouseEvents
-        )
+        title_label = QLabel(title)
+        title_label.setObjectName("settingsItemTitle")
+        title_label.setAttribute(Qt.WidgetAttribute.WA_TransparentForMouseEvents)
+        layout.addWidget(title_label)
 
-        self.description_label = QLabel(description)
-        self.description_label.setAttribute(
-            Qt.WidgetAttribute.WA_TransparentForMouseEvents
-        )
-
-        layout.addWidget(self.title_label)
-
-        # Show description if existing
         if description:
-            layout.addWidget(self.description_label)
-
-        self.update_palette()
-
-    def update_palette(self):
-        """
-        Apply system palette
-        :return:
-        """
-        palette = self.palette()
-
-        button_text = palette.color(QPalette.ColorRole.ButtonText)
-        placeholder_text = palette.color(QPalette.ColorRole.PlaceholderText)
-
-        title_palette = self.title_label.palette()
-        title_palette.setColor(
-            QPalette.ColorRole.WindowText,
-            button_text,
-        )
-        self.title_label.setPalette(title_palette)
-
-        description_palette = self.description_label.palette()
-        description_palette.setColor(
-            QPalette.ColorRole.WindowText,
-            placeholder_text,
-        )
-        self.description_label.setPalette(description_palette)
-
-        title_font = self.title_label.font()
-        title_font.setPointSize(11)
-        title_font.setWeight(QFont.Weight.Bold)
-        self.title_label.setFont(title_font)
-
-        description_font = self.description_label.font()
-        description_font.setPointSize(9)
-        self.description_label.setFont(description_font)
+            description_label = QLabel(description)
+            description_label.setObjectName("settingsItemDescription")
+            description_label.setAttribute(
+                Qt.WidgetAttribute.WA_TransparentForMouseEvents
+            )
+            layout.addWidget(description_label)
 
 
 class SettingsSubPage(QWidget):
-    def __init__(self, title: str, back_callback):
+    def __init__(self, title: str, back_callback) -> None:
         super().__init__()
+        self.setObjectName("settingsSubPage")
 
         main_layout = QVBoxLayout(self)
         main_layout.setContentsMargins(20, 16, 20, 20)
         main_layout.setSpacing(16)
 
         header_layout = QHBoxLayout()
+        back_button = QPushButton("←")
+        back_button.setObjectName("settingsBackButton")
+        back_button.setFixedSize(36, 36)
+        back_button.setCursor(Qt.CursorShape.PointingHandCursor)
+        back_button.clicked.connect(back_callback)
 
-        self.back_button = QPushButton("←")
-        self.back_button.setFixedSize(36, 36)
-        self.back_button.setCursor(Qt.CursorShape.PointingHandCursor)
-        self.back_button.clicked.connect(back_callback)
-
-        self.title_label = QLabel(title)
-
-        title_font = self.title_label.font()
-        title_font.setPointSize(15)
-        title_font.setBold(True)
-        self.title_label.setFont(title_font)
-
-        header_layout.addWidget(self.back_button)
-        header_layout.addWidget(self.title_label)
+        title_label = QLabel(title)
+        title_label.setObjectName("settingsSubPageTitle")
+        header_layout.addWidget(back_button)
+        header_layout.addWidget(title_label)
         header_layout.addStretch()
 
         self.content_layout = QVBoxLayout()
         self.content_layout.setSpacing(12)
-
         main_layout.addLayout(header_layout)
         main_layout.addLayout(self.content_layout)
         main_layout.addStretch()
 
-        self.update_palette()
-
-    def update_palette(self):
-        # Apply system palette
-        palette = self.palette()
-
-        button_color = palette.color(QPalette.ColorRole.Button)
-        border_color = palette.color(QPalette.ColorRole.Mid)
-
-        self.back_button.setStyleSheet("""
-            QPushButton {
-                border: none;
-                border-radius: 8px;
-                background-color: transparent;
-                font-size: 22px;
-            }
-
-            QPushButton:hover {
-                background-color: palette(button);
-            }
-
-            QPushButton:pressed {
-                background-color: palette(midlight);
-            }
-        """)
-
-    def changeEvent(self, event):
-        # Update when system palette change
-        if event.type() in (
-            event.Type.PaletteChange,
-            event.Type.ApplicationPaletteChange,
-        ):
-            self.update_palette()
-
-        super().changeEvent(event)
-
 
 class SettingsPage(QWidget):
-    def __init__(self, app, parent=None):
+    def __init__(self, app, parent=None) -> None:
         super().__init__(parent)
         self.app = app
-
-        self.setWindowTitle("Settings")
-        self.resize(560, 440)
+        self.settings = app.settings_manager
+        self._settings_dirty = False
+        self.setObjectName("settingsPage")
 
         root_layout = QVBoxLayout(self)
         root_layout.setContentsMargins(0, 0, 0, 0)
-
         self.stack = QStackedWidget()
 
-        self.main_page = self.create_main_page()
-        self.general_page = self.create_general_page()
-        self.appearance_page = self.create_appearance_page()
-        self.profile_page = self.create_profile_page()
-        self.about_page = self.create_about_page()
-
-        self.stack.addWidget(self.main_page)
-        self.stack.addWidget(self.general_page)
-        self.stack.addWidget(self.appearance_page)
-        self.stack.addWidget(self.profile_page)
-        self.stack.addWidget(self.about_page)
+        self.main_page = self._create_main_page()
+        self.general_page = self._create_general_page()
+        self.appearance_page = self._create_appearance_page()
+        self.account_page = self._create_account_page()
+        self.about_page = self._create_about_page()
+        for page in (
+            self.main_page,
+            self.general_page,
+            self.appearance_page,
+            self.account_page,
+            self.about_page,
+        ):
+            self.stack.addWidget(page)
 
         root_layout.addWidget(self.stack)
+        self.app.apply_qss(Path("settings.qss"), self.setStyleSheet)
+        self.language_combo.currentIndexChanged.connect(self._mark_settings_dirty)
+        self.theme_combo.currentIndexChanged.connect(self._mark_settings_dirty)
+        self.client_id_edit.textEdited.connect(self._mark_settings_dirty)
 
-    def create_main_page(self) -> QWidget:
+    def _create_main_page(self) -> QWidget:
         page = QWidget()
-
+        page.setObjectName("settingsMainPage")
         layout = QVBoxLayout(page)
-        layout.setContentsMargins(24, 20, 24, 24)
-        layout.setSpacing(12)
+        layout.setContentsMargins(0, 0, 0, 0)
+
+        scroll_area = QScrollArea()
+        scroll_area.setObjectName("settingsScrollArea")
+        scroll_area.setWidgetResizable(True)
+        scroll_area.setFrameShape(QScrollArea.Shape.NoFrame)
+
+        scroll_content = QWidget()
+        scroll_content.setObjectName("settingsScrollContent")
+        scroll_area.setWidget(scroll_content)
+        scroll_layout = QVBoxLayout(scroll_content)
+        scroll_layout.setContentsMargins(24, 20, 24, 24)
+        scroll_layout.setSpacing(12)
 
         title = QLabel("Settings")
+        title.setObjectName("settingsPageTitle")
+        scroll_layout.addWidget(title)
+        scroll_layout.addSpacing(8)
 
-        title_font = title.font()
-        title_font.setPointSize(18)
-        title_font.setBold(True)
-        title.setFont(title_font)
+        pages = (
+            ("General", "Language and launcher directories", "general_page"),
+            ("Appearance", "Launcher theme", "appearance_page"),
+            ("Account", "Microsoft authentication settings", "account_page"),
+            ("About", "Version and project information", "about_page"),
+        )
+        for title_text, description, page_name in pages:
+            button = SettingsItem(title_text, description)
+            button.clicked.connect(
+                lambda checked=False, name=page_name: self._open_page(
+                    getattr(self, name)
+                )
+            )
+            scroll_layout.addWidget(button)
 
-        # Setting options
-        info_button = SettingsItem(
-            "Wait!",
-            "Setting page is not full implemented yet.",
-        )
-
-        general_button = SettingsItem(
-            "General",
-            "Some general settings for launcher ",
-        )
-        general_button.clicked.connect(
-            lambda: self.open_page(self.general_page)
-        )
-
-        appearance_button = SettingsItem(
-            "Appearance",
-            "Settings to change the launcher look like",
-        )
-        appearance_button.clicked.connect(
-            lambda: self.open_page(self.appearance_page)
-        )
-
-        profile_button = SettingsItem(
-            "Profile",
-            "Store profile settings",
-        )
-        profile_button.clicked.connect(
-            lambda: self.open_page(self.profile_page)
-        )
-
-        about_button = SettingsItem(
-            "About",
-            "About the launcher",
-        )
-        about_button.clicked.connect(
-            lambda: self.open_page(self.about_page)
-        )
-
-        layout.addWidget(title)
-        layout.addSpacing(8)
-        layout.addWidget(info_button)
-        layout.addWidget(general_button)
-        layout.addWidget(appearance_button)
-        layout.addWidget(profile_button)
-        layout.addWidget(about_button)
-        layout.addStretch()
-
+        scroll_layout.addStretch()
+        layout.addWidget(scroll_area)
         return page
 
-    def create_general_page(self) -> QWidget:
-        page = SettingsSubPage("General", self.go_back)
+    def _create_general_page(self) -> QWidget:
+        page = SettingsSubPage("General", self._go_back)
+        current = self.settings.get("general", GeneralSettings)
 
-        language_label = QLabel("Language")
-
-        language_combo = QComboBox()
-        language_combo.addItems([
-            "English",
-            "Chinese (Traditional)",
-        ])
-
-        launcher_dir_label = QLabel("Current launcher working directory")
+        page.content_layout.addWidget(QLabel("Current launcher working directory"))
         launcher_dir = QLineEdit(self.app.work_dir.as_posix())
         launcher_dir.setReadOnly(True)
+        page.content_layout.addWidget(launcher_dir)
 
-        program_dir_label = QLabel("Current program directory")
+        page.content_layout.addWidget(QLabel("Current program directory"))
         program_dir = QLineEdit(self.app.program_dir.as_posix())
         program_dir.setReadOnly(True)
-
-        page.content_layout.addWidget(launcher_dir_label)
-        page.content_layout.addWidget(launcher_dir)
-        page.content_layout.addWidget(program_dir_label)
         page.content_layout.addWidget(program_dir)
+
         page.content_layout.addSpacing(8)
-        page.content_layout.addWidget(language_label)
-        page.content_layout.addWidget(language_combo)
-
+        page.content_layout.addWidget(QLabel("Language"))
+        self.language_combo = self._choice_combo(
+            "general", "language", LANGUAGE_LABELS, current.language
+        )
+        page.content_layout.addWidget(self.language_combo)
         return page
 
-    def create_appearance_page(self) -> QWidget:
-        page = SettingsSubPage("Appearance", self.go_back)
+    def _create_appearance_page(self) -> QWidget:
+        page = SettingsSubPage("Appearance", self._go_back)
+        current = self.settings.get("appearance", AppearanceSettings)
 
-        theme_label = QLabel("Theme")
-
-        theme_combo = QComboBox()
-        theme_combo.addItems([
-            "Follow system settings",
-            "Light (unfinished)",
-            "Dark",
-        ])
-
-        page.content_layout.addWidget(theme_label)
-        page.content_layout.addWidget(theme_combo)
-
+        page.content_layout.addWidget(QLabel("Theme"))
+        self.theme_combo = self._choice_combo(
+            "appearance", "theme", THEME_LABELS, current.theme
+        )
+        page.content_layout.addWidget(self.theme_combo)
         return page
 
-    def create_profile_page(self) -> QWidget:
-        page = SettingsSubPage("Profile", self.go_back)
+    def _create_account_page(self) -> QWidget:
+        page = SettingsSubPage("Account", self._go_back)
+        current = self.settings.get("account", AccountSettings)
 
-        test_label = QLabel("Still in development...")
+        page.content_layout.addWidget(QLabel("Microsoft OAuth Client ID"))
+        self.client_id_edit = QLineEdit(str(current.client_id))
+        self.client_id_edit.setPlaceholderText(
+            "xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx"
+        )
+        page.content_layout.addWidget(self.client_id_edit)
 
-        page.content_layout.addWidget(test_label)
-
+        help_label = QLabel(
+            "The Client ID must belong to an Azure application configured "
+            "for Microsoft device-code authentication."
+        )
+        help_label.setObjectName("settingsHelpText")
+        help_label.setWordWrap(True)
+        page.content_layout.addWidget(help_label)
         return page
 
-    def create_about_page(self) -> QWidget:
-        page = SettingsSubPage("About", self.go_back)
-
+    def _create_about_page(self) -> QWidget:
+        page = SettingsSubPage("About", self._go_back)
         brand_label = QLabel(LAUNCHER_NAME)
-        brand_label.setStyleSheet("QLabel { font-size: 20px; }")
-
-        version_label = QLabel("Version: {}".format(LAUNCHER_VERSION))
-        version_label.setStyleSheet("QLabel { font-size: 12px; }")
-
-        text = QPlainTextEdit(LAUNCHER_DESCRIPTION)
-        text.setStyleSheet("QPlainTextEdit { font-size: 13px; }")
-        text.setReadOnly(True)
+        brand_label.setObjectName("settingsBrand")
+        version_label = QLabel(f"Version: {LAUNCHER_VERSION}")
+        version_label.setObjectName("settingsVersion")
+        description = QPlainTextEdit(LAUNCHER_DESCRIPTION)
+        description.setObjectName("settingsDescription")
+        description.setReadOnly(True)
 
         page.content_layout.addWidget(brand_label)
         page.content_layout.addWidget(version_label)
-        page.content_layout.addWidget(text)
-
+        page.content_layout.addWidget(description)
         return page
 
-    def open_page(self, page: QWidget):
+    def _choice_combo(
+        self,
+        section: str,
+        field: str,
+        labels: dict[str, str],
+        current: str,
+    ) -> QComboBox:
+        combo = QComboBox()
+        for value in self.settings.choices(section, field):
+            combo.addItem(labels.get(value, str(value)), value)
+        index = combo.findData(current)
+        combo.setCurrentIndex(max(index, 0))
+        return combo
+
+    def _mark_settings_dirty(self, *_args) -> None:
+        self._settings_dirty = True
+
+    def _save_pending_settings(self, *, show_error: bool = True) -> bool:
+        if not self._settings_dirty:
+            return True
+
+        data = {
+            "general": {"language": self.language_combo.currentData()},
+            "appearance": {"theme": self.theme_combo.currentData()},
+            "account": {"client_id": self.client_id_edit.text().strip()},
+        }
+        try:
+            self.settings.validate(data)
+            for section, value in data.items():
+                self.settings.set(section, value)
+            self.settings.save()
+        except Exception as error:
+            if show_error:
+                QMessageBox.critical(self, "Settings error", str(error))
+            return False
+
+        self._settings_dirty = False
+        return True
+
+    def _open_page(self, page: QWidget) -> None:
         self.stack.setCurrentWidget(page)
 
-    def go_back(self):
-        self.stack.setCurrentWidget(self.main_page)
+    def _go_back(self) -> None:
+        if self._save_pending_settings():
+            self.stack.setCurrentWidget(self.main_page)
+
+    def hideEvent(self, event) -> None:
+        self._save_pending_settings()
+        super().hideEvent(event)

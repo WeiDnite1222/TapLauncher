@@ -14,6 +14,8 @@ from core_lib.launcher.object import Launcher as LauncherObject
 from manager.account import AccountManager
 from manager.game import GameManager
 from manager.profile import ProfileManager
+from manager.settings import SettingsManager
+from manager.settings_models import AccountSettings, AppearanceSettings, GeneralSettings
 from manager.widgets import WidgetManager
 from window import LauncherMainWindow
 
@@ -31,6 +33,14 @@ class Launcher(QApplication, LauncherObject):
         # Widget (Signal, Event)
         self.widget_manager = WidgetManager()
         # Manager
+        self.settings_manager = SettingsManager(self.root_settings_dir)
+        self.settings_manager.register("general", GeneralSettings)
+        self.settings_manager.register("appearance", AppearanceSettings)
+        self.settings_manager.register("account", AccountSettings)
+        if self.root_settings_dir.is_file():
+            self.settings_manager.load()
+        else:
+            self.settings_manager.load_defaults().save()
         self.profile_manager = ProfileManager(self, self.widget_manager)
         self.account_manager = AccountManager(self, self.widget_manager)
         self.game_manager = GameManager(self)
@@ -122,6 +132,10 @@ class Launcher(QApplication, LauncherObject):
     @property
     def log_dir(self):
         return self.work_dir / "log"
+
+    @property
+    def root_settings_dir(self):
+        return self.data_dir / "settings.toml"
 
     @property
     def default_game_dir(self) -> Path:

@@ -10,8 +10,11 @@ authors = [
 dependencies = [
     "colorlog>=6.9,<7",
     "keyring>=25.6,<26",
+    "pydantic>=2.11,<3",
     "PySide6>=6.8,<7",
     "requests>=2.32,<3",
+    "tomli>=2.2,<3; python_version < '3.11'",
+    "tomli-w>=1.2,<2",
 ]
 
 [dependency-groups]
@@ -20,6 +23,9 @@ build = [
     "ordered-set>=4.1",
     "zstandard>=0.23",
     "imageio>=2.37.0"
+]
+test = [
+    "pytest>=8.4,<10",
 ]
 
 [project.urls]

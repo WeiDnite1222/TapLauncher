@@ -251,7 +251,10 @@ class ProfileManager(QObject):
             )
             result.append(profile_summary)
 
-        return result
+        settings = self.profiles.get("settings", {})
+        sorting = settings.get("profileSorting", "ByLastPlayed")
+        current_id = get_current_profile_id(self.profiles)
+        return sort_profile_summaries(result, sorting, current_id)
 
     def get_profile(self, profile_id: str) -> ProfileDetail | None:
         if not self.contains(profile_id, show_error=True):
@@ -701,3 +704,37 @@ class ProfileManager(QObject):
     @property
     def is_modified(self) -> bool:
         return self._is_modified
+
+
+def sort_profile_summaries(
+    profiles: list[ProfileSummary],
+    sorting: str,
+    current_profile_id: str | None = None,
+) -> list[ProfileSummary]:
+    """Order profiles according to launcher_profiles.json settings."""
+    ordered = list(profiles)
+
+    if sorting == "ByName":
+        return sorted(
+            ordered,
+            key=lambda profile: (
+                profile.display_name.casefold(),
+                profile.version_id.casefold(),
+                profile.id,
+            ),
+        )
+
+    if sorting == "ByLastPlayed":
+        def last_used_timestamp(profile: ProfileSummary) -> float:
+            if profile.last_used is None:
+                return float("-inf")
+            try:
+                return profile.last_used.timestamp()
+            except (OSError, OverflowError, ValueError):
+                return float("-inf")
+
+        ordered.sort(key=last_used_timestamp, reverse=True)
+        if current_profile_id is not None:
+            ordered.sort(key=lambda profile: profile.id != current_profile_id)
+
+    return ordered

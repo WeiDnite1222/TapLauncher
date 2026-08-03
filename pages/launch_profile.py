@@ -362,8 +362,18 @@ class LaunchProfilePage(QWidget):
         profiles: list[ProfileSummary] = self.profile_manager.list_profiles()
         self.profile_popup.load_profiles(profiles)
 
-        if len(profiles) > 0:
-            self.select_profile(profiles[0])
+        if not profiles:
+            self.profile_button.setProperty("profile_id", None)
+            self.profile_button.name_label.setText("No profiles available")
+            self.profile_button.version_label.clear()
+            return
+
+        selected_id = self.profile_button.property("profile_id")
+        available = {profile.id: profile for profile in profiles}
+        selected = available.get(selected_id)
+        if selected is None:
+            selected = available.get(self.profile_manager.get_current_profile_id())
+        self.select_profile(selected or profiles[0])
 
     def toggle_profile_popup(self) -> None:
         if self.profile_popup.isVisible():

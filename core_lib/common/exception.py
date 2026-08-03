@@ -1,4 +1,7 @@
 from pathlib import Path
+from typing import Mapping
+
+from pydantic import ValidationError
 
 
 class LauncherException(Exception):
@@ -111,3 +114,19 @@ class AuthenticationSessionException(LauncherException):
 
 class ThirdPartyAPIException(LauncherException):
     user_message = "An error occurred while fetching third party API."
+
+class SettingsError(LauncherException):
+    user_message = "An settings error occurred."
+
+class ModelRegistrationError(SettingsError):
+    user_message = "Settings section could not be registered."
+
+class ConfigValidationError(SettingsError):
+    user_message = "Settings section could not be validated."
+
+    def __init__(self, errors: Mapping[str, ValidationError]) -> None:
+        self.errors = dict(errors)
+        details = "\n".join(
+            f"[{section}]\n{error}" for section, error in self.errors.items()
+        )
+        super().__init__(f"Invalid settings configuration:\n{details}")

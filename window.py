@@ -204,7 +204,7 @@ class LauncherMainWindow(QMainWindow):
         # current account's avatar
 
         # Profile btn
-        self.open_create_profile_page = self.toolbar.add_button(icon=self.app.get_icon(Path(self.app.icon_dir, "add_temp.png")))
+        self.open_create_profile_page = self.toolbar.add_button(icon=self.app.get_icon(Path(self.app.icon_dir, "add.png")))
 
         # Bind tool buttons
         self.toolbar.addWidget(self.home_button)
