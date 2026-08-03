@@ -471,10 +471,17 @@ def check_natives_exists(manifest: dict, libraries_dir: Path, natives_dir: Path)
 
 
 def check_full_libraries_exists(manifest: dict, libraries_dir: Path, natives_dir: Path) -> bool:
-    if not check_natives_exists(manifest, libraries_dir, natives_dir) or not check_libraries_exists(manifest, libraries_dir):
-        return False
+    natives_exist = check_natives_exists(
+        manifest,
+        libraries_dir,
+        natives_dir,
+    )
+    missing_libraries = check_libraries_exists(
+        manifest,
+        libraries_dir,
+    )
 
-    return True
+    return natives_exist and not missing_libraries
 
 
 def generate_classpath(manifest: dict, libraries_dir: Path, core_file_path: Path):

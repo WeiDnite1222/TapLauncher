@@ -18,11 +18,22 @@ import argparse
 import logging
 
 from PySide6.QtWidgets import QApplication, QMainWindow
+from platformdirs import (
+    user_data_dir,
+)
 
 from app import Launcher
+from constant import LAUNCHER_DIR_NAME
 
 from core_lib.log.default import DEFAULT_FORMAT, DEFAULT_DATE_FORMAT, get_colorful_handler
 from core_lib.qt import messagebox
+
+def show_error(message):
+    app = QApplication(sys.argv)
+    app.setApplicationName("Launcher Bootstrapper")
+    window = QMainWindow()
+    messagebox.error(window, "Error", message)
+    app.exit()
 
 def main():
     root_logger = logging.getLogger()
@@ -32,10 +43,10 @@ def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("-m", "--mode", choices=['lightweight', 'full', 'choice'], default='choice',
                         help="Select a mode (lightweight for TUI, full for GUI, or choice to open a mode-selection window). "
-                             "TUI is not implemented yet.", required=False)
+                             "TUI is not implemented yet.", required=False, deprecated=True)
     parser.add_argument("-d", "--debug", action="store_true",
                         help="Enable debug mode", default=False)
-    parser.add_argument("-wd", "--work-dir", default=os.getcwd(), help="Work directory")
+    parser.add_argument("-wd", "--work-dir", default=None, help="Work directory")
 
     args, unknown = parser.parse_known_args()
     for arg in unknown:
@@ -43,21 +54,31 @@ def main():
 
     debug = args.debug
 
-    # check workdir
-    if not os.path.exists(args.work_dir) or not os.path.isdir(args.work_dir):
-        app = QApplication(sys.argv)
-        app.setApplicationName("Launcher Bootstrapper")
-        window = QMainWindow()
-        messagebox.error(window, "Error", f"Specified work directory \"{args.work_dir}\" does not exist or"
-                                      " is not a directory.")
-        logger.error("Work directory '%s' does not exist. Exiting..." % args.work_dir)
-        app.exit()
+    work_dir = args.work_dir
+
+    if work_dir is None:
+        if debug:
+            # Use working directory if launcher is in debug mode
+            work_dir = os.getcwd()
+        else:
+            try:
+                # Use user application data directory
+                work_dir = user_data_dir(LAUNCHER_DIR_NAME, appauthor=False)
+                os.makedirs(work_dir, exist_ok=True)
+            except Exception as e:
+                logger.warning("Failed to get application directory: %s", e)
+                show_error("Unable to get application directory. Try specifying 'work_dir' argument.")
+                sys.exit(-1)
+    else:
+        # check workdir
+        logger.error("Work directory '%s' does not exist." % work_dir)
+        show_error(f"Specified work directory \"{work_dir}\" does not exist or is not a directory.")
         sys.exit(-1)
 
     if os.getcwd() != args.work_dir:
-        os.chdir(args.work_dir)
+        os.chdir(work_dir)
 
-    logger.info("Current working directory is {}".format(args.work_dir))
+    logger.info("Current working directory is {}".format(work_dir))
 
     # Init lib
     level = logging.DEBUG if debug else logging.INFO

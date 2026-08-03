@@ -1,17 +1,20 @@
 import json
 import os
 import subprocess
+import threading
 import time
 import traceback
+import types
 from collections.abc import Callable
 from dataclasses import dataclass, field
 from pathlib import Path
+from threading import Thread
+from typing import Literal
 from uuid import uuid4
-from PySide6.QtCore import QObject
-from PySide6.QtWidgets import QInputDialog
+from PySide6.QtCore import QObject, Signal
 
 from constant import CLIENT_ID, LAUNCHER_VERSION
-from core_lib.common.common import FileObject
+from core_lib.common.common import FileObject, download_multiple_files
 from core_lib.common.exception import VersionManifestFetchException, VersionManifestSaveException, \
     NoSpecifiedVersionKeyException
 from core_lib.game.argument import ArgumentMappings, generate_launch_command
@@ -24,8 +27,9 @@ from core_lib.game.version_info import fetch_and_save_version_manifest, get_spec
 from core_lib.runtime.java import find_java_installations
 from manager.account import AccountManager, LaunchAccount
 from manager.profile import LaunchProfile
-from manager.widgets import SelectPathRequest, AskForRequest
+from manager.widgets import SelectPathRequest, AskForRequest, SignalTransferItem
 
+MAX_DOWNLOAD_ATTEMPTS = 3
 
 class ManifestManager:
     def __init__(self, app):
@@ -226,7 +230,7 @@ class ManifestManager:
         version_id: str
         client_version_id: str
 
-    def resolve_launch_manifest(self, version_id: str, visited: set[str] | None = None) -> ResolvedVersionManifest | None:
+    def resolve_manifest(self, version_id: str, visited: set[str] | None = None) -> ResolvedVersionManifest | None:
         visited = set() if visited is None else visited
 
         if version_id in visited:
@@ -259,7 +263,7 @@ class ManifestManager:
             )
 
         # Get inherits if needed
-        parent = self.resolve_launch_manifest(parent_id, visited)
+        parent = self.resolve_manifest(parent_id, visited)
 
         if parent is None:
             return None
@@ -396,6 +400,251 @@ class JavaManager:
 
         return None
 
+class GameFileDownloadRequest(SignalTransferItem):
+    def __init__(self, job_name: Literal["download_client", "download_libraries", "download_assets"],
+                 args: tuple):
+        SignalTransferItem.__init__(self)
+        self.job_name: str = job_name
+        self.args: tuple = args
+
+class GameFileManager:
+    def __init__(self, app, manifest_manager: ManifestManager):
+        self.app = app
+        self.widget_mgr = app.widget_manager
+        self.manifest_mgr = manifest_manager
+        self.jobs = {
+            "download_client": self.download_client,
+            "download_libraries": self.download_libraries,
+            "download_assets": self.download_assets,
+        }
+
+    def get_manifest(self, target_version: str,
+                     manifest: dict | None, failed_message: str,
+                     vanilla: bool=False) -> dict | None:
+        if manifest is None:
+            # Version manifest
+            if not vanilla:
+                resolved = self.manifest_mgr.resolve_manifest(target_version)
+            else:
+                resolved = self.manifest_mgr.get_cached_version_manifest(target_version)
+
+            if resolved is None:
+                self.widget_mgr.signal.show_error_message.emit(
+                    failed_message,
+                )
+                return None
+
+            if isinstance(resolved, self.manifest_mgr.ResolvedVersionManifest):
+                manifest = resolved.manifest
+            else:
+                manifest = resolved
+
+        return manifest
+
+    def download_client(self, target_version: str, core_file_path, manifest: dict | None=None) -> bool:
+        """
+        Download client
+        :param target_version: THIS should be the vanilla version id!
+        :param core_file_path:
+        :param manifest:
+        :return:
+        """
+        manifest = self.get_manifest(target_version, manifest,
+                                     "Unable to download client for version {}, failed to fetch version manifest".format(target_version),
+                                     vanilla=True)
+
+        if manifest is None:
+            return False
+
+        callback, task_id = self.manifest_mgr.create_download_progress_callback(
+            "Downloading dependencies..."
+        )
+
+        try:
+            download_core_file(manifest, core_file_path,
+                               raise_for_null_hash=True,
+                               progress_callback=callback)
+        except Exception as e:
+            self.widget_mgr.download_signal.failed.emit(task_id, str(e))
+            self.widget_mgr.signal.show_error_message.emit(
+                "Unable to download client for version {}".format(target_version)
+            )
+            return False
+        else:
+            self.widget_mgr.download_signal.finished.emit(task_id)
+
+        return True
+
+    def download_libraries(self, target_version: str, libraries_dir: Path, natives_dir: Path, manifest: dict | None=None) -> bool:
+        manifest = self.get_manifest(target_version, manifest,
+                                     "Unable to download dependencies for version {}, failed to fetch version manifest.".format(
+                                         target_version)
+                                     )
+        if manifest is None:
+            return False
+
+
+        callback, task_id = self.manifest_mgr.create_download_progress_callback(
+            "Downloading dependencies..."
+        )
+
+        try:
+            download_full_libraries(manifest, libraries_dir, natives_dir,
+                                    progress_callback=callback,
+                                    redownload_callback=self.redownload_files)
+        except Exception as e:
+            self.widget_mgr.download_signal.failed.emit(task_id, str(e))
+            self.widget_mgr.signal.show_error_message.emit(
+                "Unable to download dependencies for version {}".format(target_version)
+            )
+            return False
+        else:
+            self.widget_mgr.download_signal.finished.emit(task_id)
+
+        return True
+
+    def download_assets(self, target_version: str, assets_dir: Path, manifest: dict | None = None,
+                        allow_missing: bool = True) -> bool:
+        """
+        Download assets
+        :param target_version:
+        :param assets_dir:
+        :param manifest:
+        :param allow_missing:
+        :return:
+        """
+        manifest = self.get_manifest(target_version, manifest,
+                                     "Unable to download assets for version {}, failed to fetch version manifest.".format(target_version))
+
+        if manifest is None:
+            return False
+
+        callback, task_id = self.manifest_mgr.create_download_progress_callback(
+            "Downloading assets"
+        )
+
+        try:
+            fails = download_assets(
+                manifest,
+                assets_dir,
+                no_hash_check=True,
+                progress_callback=callback,
+                launcher_root=self.app.work_dir,
+            )
+
+            result, fails = self.redownload_files(fails)
+
+            if not result:
+                if allow_missing:
+                    self.widget_mgr.signal.show_warning_message.emit(
+                        "Some assets could not be downloaded. They are not required to launch the game,"
+                        " but missing assets may cause texture issues while you play."
+                        " (Allow missing assets flag is enabled)"
+                    )
+                else:
+                    self.widget_mgr.signal.show_error_message.emit(
+                        "Some assets could not be downloaded. They are not required to launch the game,"
+                        " but missing assets may cause texture issues while you play."
+                        " Try relaunching to download them automatically."
+                    )
+                    self.widget_mgr.download_signal.failed.emit(task_id, "Some assets could not be downloaded.")
+                    return False
+        except Exception as e:
+            self.widget_mgr.download_signal.failed.emit(task_id, str(e))
+            self.widget_mgr.signal.show_error_message.emit(
+                "Unable to download assets for version {}".format(target_version)
+            )
+            return False
+        else:
+            self.widget_mgr.download_signal.finished.emit(task_id)
+
+        return True
+
+    def start_task(self, request: GameFileDownloadRequest) -> Thread:
+        job_name = request.job_name
+        args = request.args
+
+        # Check target job function is existing
+        if not job_name in self.jobs:
+            raise NotImplementedError("Job {} not implemented".format(job_name))
+
+        def worker():
+            try:
+                result = self.jobs[request.job_name](*request.args)
+                request.result_queue.put(result)
+            except Exception as exc:
+                self.app.logger.exception("Game file task failed")
+                request.result_queue.put(exc)
+            finally:
+                request.wait_event.set()
+
+        thread = Thread(target=worker, daemon=True)
+        thread.start()
+
+        return thread
+
+    def redownload_files(self, files: list[FileObject]) -> tuple[bool, list[FileObject]]:
+        if not files:
+            return True, []
+
+        message = (
+                "Some files failed to download.\n"
+                "Would you like to retry downloading them?\n\n"
+        )
+
+        request = AskForRequest("Redownload", message)
+        request.details = "\n".join(file.posix_path for file in files)
+
+        self.widget_mgr.signal.askyesno.emit(request)
+
+        if not request.wait(60):
+            self.widget_mgr.signal.show_error_message.emit(
+                "Timed out while waiting for confirmation. Please try again."
+            )
+            return False, files
+
+        result = request.result()
+
+        if not result:
+            return False, files
+
+        # copy
+        pending = list(files)
+
+        callback, task_id = self.manifest_mgr.create_download_progress_callback(f"Redownloading {len(files)} files.")
+
+        for retry_time in range(1, MAX_DOWNLOAD_ATTEMPTS + 1):
+            if not pending:
+                return True, []
+
+            self.widget_mgr.download_signal.log.emit(f"Attempt {retry_time}/{MAX_DOWNLOAD_ATTEMPTS}")
+
+            fails, successes = download_multiple_files(pending,
+                                                       progress_callback=callback)
+
+            for file in successes:
+                self.widget_mgr.download_signal.log.emit(f"Downloaded {file.posix_path}.")
+
+            if fails:
+                pending = fails
+            else:
+                self.widget_mgr.download_signal.finished.emit(task_id)
+                pending = []
+
+        if not pending:
+            return True, []
+
+        failed_list = "\n".join(file.posix_path for file in pending)
+        self.widget_mgr.download_signal.failed.emit(
+            task_id,
+            f"{len(pending)} files still failed after retries.",
+        )
+        self.app.logger.warning(
+            "Unable to download these files:\n{}".format(failed_list)
+        )
+
+        return False, pending
+
 @dataclass
 class LaunchResult:
     process: subprocess.Popen | None = None
@@ -414,13 +663,19 @@ class LaunchResult:
         self.warnings.append(message)
 
 class LaunchManager:
-    def __init__(self, app, manifest_manager: ManifestManager, java_manager: JavaManager, account_manager: AccountManager):
+    def __init__(self, app, manifest_manager: ManifestManager, java_manager: JavaManager, game_file_manager: GameFileManager,
+                 account_manager: AccountManager):
         self.app = app
         self.manifest_mgr = manifest_manager
         self.widget_mgr = app.widget_manager
         self.java_mgr = java_manager
+        self.game_file_mgr = game_file_manager
         self.account_mgr = account_manager
         self.launched_profiles: list[str] = []
+        self.signal = self.LaunchSignal()
+
+    class LaunchSignal(QObject):
+        finished = Signal(object, object)  # LaunchProfile, LaunchResult
 
     def launch(self, profile: LaunchProfile) -> LaunchResult:
         result = LaunchResult()
@@ -428,8 +683,11 @@ class LaunchManager:
             version_id = profile.version_id
             version_id = self.manifest_mgr.resolve_version_alias(version_id)
 
+            if version_id is None:
+                return result.fail("Unable to resolve the correct version id of the profile.")
+
             # Version manifest
-            resolved = self.manifest_mgr.resolve_launch_manifest(version_id)
+            resolved = self.manifest_mgr.resolve_manifest(version_id)
 
             if resolved is None:
                 return result.fail(
@@ -461,11 +719,37 @@ class LaunchManager:
 
             # Check client
             if not core_file_path.exists():
-                download_core_file(version_manifest, core_file_path, raise_for_null_hash=True)
+                request = GameFileDownloadRequest(
+                    "download_client",
+                    (client_version_id, core_file_path, version_manifest,)
+                )
+                self.game_file_mgr.start_task(request)
+
+                request.wait(None)
+
+                client_result = request.result()
+
+                if client_result is not True:
+                    return result.fail(
+                        f"Unable to launch game. Client download failed."
+                    )
 
             # Libraries
             if not check_full_libraries_exists(version_manifest, libraries_dir, natives_dir):
-                download_full_libraries(version_manifest, libraries_dir, natives_dir)
+                request = GameFileDownloadRequest(
+                    "download_libraries",
+                    (version_id, libraries_dir, natives_dir, version_manifest)
+                )
+                self.game_file_mgr.start_task(request)
+
+                request.wait(None)
+
+                lib_result = request.result()
+
+                if lib_result is not True:
+                    return result.fail(
+                        "Unable to launch game due to certain dependencies download failure."
+                    )
 
             current_account_id = self.account_mgr.get_current_account_id()
 
@@ -479,27 +763,20 @@ class LaunchManager:
             # Asset
             default_assets_dir = Path(self.app.work_dir, "assets")
             if not check_assets_exist(version_manifest, default_assets_dir, launcher_root=self.app.work_dir):
-                callback, task_id = self.manifest_mgr.create_download_progress_callback(
-                    "Downloading missing assets"
+                request = GameFileDownloadRequest(
+                    "download_assets",
+                    (version_id, default_assets_dir, version_manifest)
                 )
+                self.game_file_mgr.start_task(request)
 
-                try:
-                    download_assets(
-                        version_manifest,
-                        default_assets_dir,
-                        no_hash_check=True,
-                        progress_callback=callback,
-                        launcher_root=self.app.work_dir,
+                request.wait(None)
+
+                asset_result = request.result()
+
+                if asset_result is not True:
+                    return result.fail(
+                        "Unable to launch game due to certain assets download failure."
                     )
-                except Exception as e:
-                    self.widget_mgr.download_signal.failed.emit(task_id, str(e))
-                    result.add_warning(
-                        "Some assets could not be downloaded. They are not required to launch the game,"
-                        " but missing assets may cause texture issues while you play."
-                        " Try relaunching to download them automatically."
-                    )
-                else:
-                    self.widget_mgr.download_signal.finished.emit(task_id)
 
             assets_dir = find_correct_assets_dir(asset_id, default_assets_dir, self.app.work_dir)
 
@@ -602,6 +879,20 @@ class LaunchManager:
 
         return result
 
+    def start_launch_task(self, profile: LaunchProfile) -> Thread:
+        def worker():
+            result = self.launch(profile)
+            self.signal.finished.emit(profile, result)
+            return result
+
+        thread = threading.Thread(
+            target=worker,
+            name=f"launch-{profile.profile_id}",
+            daemon=True,
+        )
+        thread.start()
+        return thread
+
     def is_profile_running(self, profile_id):
         return profile_id in self.launched_profiles
 
@@ -623,4 +914,5 @@ class GameManager(QObject):
         self.widget_mgr = app.widget_manager
         self.manifest = ManifestManager(self.app)
         self.java = JavaManager(self.app)
-        self.launch = LaunchManager(self.app, self.manifest, self.java, self.account_manager)
+        self.game_file = GameFileManager(self.app, manifest_manager=self.manifest)
+        self.launch = LaunchManager(self.app, self.manifest, self.java, self.game_file, self.account_manager)
