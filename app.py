@@ -151,7 +151,7 @@ class Launcher(QApplication, LauncherObject):
         full_path = self.styles_path / qss_relative_path
         if not full_path.exists():
             messagebox.error(
-                self.main_window,
+                None,
                 "Resource Error",
                 "Missing stylesheet file: {}".format(full_path),
             )

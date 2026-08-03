@@ -16,11 +16,13 @@ import os
 import sys
 import argparse
 import logging
+
+from PySide6.QtWidgets import QApplication, QMainWindow
+
 from app import Launcher
-from tkinter import messagebox
 
 from core_lib.log.default import DEFAULT_FORMAT, DEFAULT_DATE_FORMAT, get_colorful_handler
-
+from core_lib.qt import messagebox
 
 def main():
     root_logger = logging.getLogger()
@@ -43,9 +45,13 @@ def main():
 
     # check workdir
     if not os.path.exists(args.work_dir) or not os.path.isdir(args.work_dir):
-        messagebox.showerror("Error", f"Specified work directory \"{args.work_dir}\" does not exist or"
+        app = QApplication(sys.argv)
+        app.setApplicationName("Launcher Bootstrapper")
+        window = QMainWindow()
+        messagebox.error(window, "Error", f"Specified work directory \"{args.work_dir}\" does not exist or"
                                       " is not a directory.")
         logger.error("Work directory '%s' does not exist. Exiting..." % args.work_dir)
+        app.exit()
         sys.exit(-1)
 
     if os.getcwd() != args.work_dir:

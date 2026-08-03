@@ -2,7 +2,7 @@ from PySide6.QtWidgets import QMessageBox, QMainWindow, QWidget, QDialog, QVBoxL
     QDialogButtonBox, QSizePolicy
 
 
-def create_messagebox(parent: QWidget, title: str, message: str,
+def create_messagebox(parent: QWidget | None, title: str, message: str,
                       icon: QMessageBox.Icon = QMessageBox.Icon.Information,
                       button: QMessageBox.StandardButton = QMessageBox.StandardButton.Ok) -> QMessageBox:
     msg = QMessageBox(parent)
@@ -13,7 +13,7 @@ def create_messagebox(parent: QWidget, title: str, message: str,
     return msg
 
 
-def error(parent: QWidget, title: str, message: str,
+def error(parent: QWidget | None, title: str, message: str,
           button: QMessageBox.StandardButton = QMessageBox.StandardButton.Ok) -> None:
     create_messagebox(
         parent,
@@ -24,7 +24,7 @@ def error(parent: QWidget, title: str, message: str,
     ).exec()
 
 
-def info(parent: QWidget, title: str, message: str,
+def info(parent: QWidget | None, title: str, message: str,
          button: QMessageBox.StandardButton = QMessageBox.StandardButton.Ok) -> None:
     create_messagebox(
         parent,
@@ -35,7 +35,7 @@ def info(parent: QWidget, title: str, message: str,
     ).exec()
 
 
-def warning(parent: QWidget, title: str, message: str,
+def warning(parent: QWidget | None, title: str, message: str,
             button: QMessageBox.StandardButton = QMessageBox.StandardButton.Ok) -> None:
     create_messagebox(
         parent,
@@ -47,7 +47,7 @@ def warning(parent: QWidget, title: str, message: str,
 
 
 def error_with_plain_text(
-    parent: QWidget,
+    parent: QWidget | None,
     title: str,
     message: str,
     content: str,
@@ -78,7 +78,7 @@ def error_with_plain_text(
     dialog.exec()
 
 
-def ask_yes_no_with_plain_text(parent: QWidget, title: str, message: str, content: str):
+def ask_yes_no_with_plain_text(parent: QWidget | None, title: str, message: str, content: str):
     dialog = QDialog(parent)
     dialog.setWindowTitle(title)
     dialog.resize(720, 420)
