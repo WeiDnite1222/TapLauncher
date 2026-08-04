@@ -11,6 +11,10 @@
 # nuitka-project-if: {OS} == "Windows":
 #    nuitka-project: --windows-console-mode=disable
 #    nuitka-project: --windows-icon-from-ico={MAIN_DIRECTORY}/resources/icons/icon.png
+# nuitka-project-if: {OS} == "Darwin":
+#    nuitka-project: --macos-create-app-bundle
+#    nuitka-project: --macos-app-icon={MAIN_DIRECTORY}/resources/icons/apple-app-icon.icon
+#    nuitka-project: --macos-app-name="TapLauncher"
 
 import os
 import sys
@@ -43,7 +47,7 @@ def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("-m", "--mode", choices=['lightweight', 'full', 'choice'], default='choice',
                         help="Select a mode (lightweight for TUI, full for GUI, or choice to open a mode-selection window). "
-                             "TUI is not implemented yet.", required=False, deprecated=True)
+                             "TUI is not implemented yet.", required=False)
     parser.add_argument("-d", "--debug", action="store_true",
                         help="Enable debug mode", default=False)
     parser.add_argument("-wd", "--work-dir", default=None, help="Work directory")

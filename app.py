@@ -1,5 +1,4 @@
 import sys
-from _colorize import Theme
 from pathlib import Path
 from typing import Callable
 
@@ -243,7 +242,7 @@ class Launcher(QApplication, LauncherObject):
     def get_main_window(self):
         return self.main_window
 
-    def apply_theme(self, theme: Theme | None=None):
+    def apply_theme(self, theme=None):
         if not theme:
             appearance = self.settings_manager.get("appearance", AppearanceSettings)
 
