@@ -43,31 +43,31 @@ class TestPage(QWidget):
         self.resize(800, 600)
         self.setWindowFlags(self.windowFlags() | Qt.WindowType.WindowMaximizeButtonHint)
 
-        self.button = QPushButton("Fetch Version Data")
+        self.button = QPushButton(self.app.tr_text("Fetch Version Data"))
         self.button.setObjectName("ActionButton")
         self.button.clicked.connect(self.run_test)
 
-        self.button_2 = QPushButton("Download client")
+        self.button_2 = QPushButton(self.app.tr_text("Download client"))
         self.button_2.setObjectName("ActionButton")
         self.button_2.clicked.connect(self.run_download_client)
 
-        self.button_3 = QPushButton("Download libraries")
+        self.button_3 = QPushButton(self.app.tr_text("Download libraries"))
         self.button_3.setObjectName("ActionButton")
         self.button_3.clicked.connect(self.run_download_libraries)
 
-        self.button_4 = QPushButton("Refresh versions")
+        self.button_4 = QPushButton(self.app.tr_text("Refresh versions"))
         self.button_4.setObjectName("ActionButton")
         self.button_4.clicked.connect(self.load_all_version)
 
-        self.button_5 = QPushButton("Download assets")
+        self.button_5 = QPushButton(self.app.tr_text("Download assets"))
         self.button_5.setObjectName("ActionButton")
         self.button_5.clicked.connect(self.download_assets)
 
-        self.button_6 = QPushButton("Parse Arguments")
+        self.button_6 = QPushButton(self.app.tr_text("Parse Arguments"))
         self.button_6.setObjectName("ActionButton")
         self.button_6.clicked.connect(self.parse_argument)
 
-        self.button_7 = QPushButton("Launch Game! (Offline)")
+        self.button_7 = QPushButton(self.app.tr_text("Launch Game! (Offline)"))
         self.button_7.setObjectName("ActionButton")
         self.button_7.clicked.connect(self.launch_offline_game)
 

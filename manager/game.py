@@ -1,5 +1,6 @@
 import json
 import os
+import re
 import subprocess
 import sys
 import threading
@@ -15,7 +16,7 @@ from PySide6.QtCore import QObject, Signal
 
 from constant import CLIENT_ID, LAUNCHER_VERSION
 from core_lib.common.common import FileObject, download_multiple_files
-from core_lib.common.exception import VersionManifestFetchException, VersionManifestSaveException, \
+from core_lib.common.exception import JavaRuntimeException, VersionManifestFetchException, VersionManifestSaveException, \
     NoSpecifiedVersionKeyException
 from core_lib.game.argument import ArgumentMappings, generate_launch_command
 from core_lib.game.asset import check_assets_exist, download_assets, find_correct_assets_dir
@@ -24,12 +25,21 @@ from core_lib.game.mod.mod_core import merge_manifest
 from core_lib.game.version_info import fetch_and_save_version_manifest, get_specific_version_manifest_url_and_hash, \
     save_version_manifest, find_useful_part_in_specific_version_manifest, download_core_file, get_latest_version, \
     LATEST_VERSION_ALIASES
-from core_lib.runtime.java import find_java_installations
+from core_lib.runtime.java import find_java_installations, get_java_version
+from core_lib.runtime.mojang import download_java_runtimes, fetch_runtime_manifest, get_current_platform_runtime_key
 from manager.account import AccountManager, LaunchAccount
 from manager.profile import LaunchProfile
 from manager.widgets import SelectPathRequest, AskForRequest, SignalTransferItem
 
 MAX_DOWNLOAD_ATTEMPTS = 3
+
+@dataclass(frozen=True)
+class AvailableVersion:
+    id: str
+    display_name: str
+    version_type: str
+    source: str
+    inherits_from: str | None = None
 
 class ManifestManager:
     def __init__(self, app):
@@ -305,10 +315,112 @@ class ManifestManager:
             is_snapshot=version_id == "latest-snapshot",
         )
 
+    def list_available_profile_versions(self) -> list[AvailableVersion]:
+        result: list[AvailableVersion] = []
+        root_manifest = self.get_cached_version_manifest()
+        vanilla_ids: set[str] = set()
+
+        # For vanilla version
+        for version in (root_manifest or {}).get("versions", []):
+            version_id = version.get("id")
+            if not version_id:
+                continue
+
+            vanilla_ids.add(version_id)
+            result.append(
+                AvailableVersion(
+                    id=version_id,
+                    display_name=f"Minecraft {version_id}",
+                    version_type=version.get("type") or "custom",
+                    source="vanilla",
+                )
+            )
+
+        # Official launcher aliases are valid vanilla profile versions too.
+        for alias_id, alias in LATEST_VERSION_ALIASES.items():
+            result.append(
+                AvailableVersion(
+                    id=alias_id,
+                    display_name=alias.get("displayName", alias_id),
+                    version_type=(
+                        "snapshot" if alias_id == "latest-snapshot" else "release"
+                    ),
+                    source="vanilla",
+                )
+            )
+
+        # Locally created modded and custom versions.
+        versions_dir = Path(self.app.work_dir, "versions")
+
+        for manifest_path in versions_dir.glob("*/*.json"):
+            try:
+                manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+            except (OSError, json.JSONDecodeError) as exc:
+                self.app.logger.warning(
+                    f"Unable to read local version manifest {manifest_path}: {exc}"
+                )
+                continue
+
+            version_id = manifest.get("id")
+            if not version_id or version_id in vanilla_ids:
+                continue
+
+            inherits_from = manifest.get("inheritsFrom")
+            result.append(
+                AvailableVersion(
+                    id=version_id,
+                    display_name=(
+                        f"{version_id} - Minecraft {inherits_from}"
+                        if inherits_from else version_id
+                    ),
+                    version_type=manifest.get("type") or "custom",
+                    source="modded" if inherits_from else "custom",
+                    inherits_from=inherits_from,
+                )
+            )
+
+        # Keep the first entry for each ID. The root manifest takes precedence
+        # over locally cached copies of vanilla manifests.
+        unique: dict[str, AvailableVersion] = {}
+        for version in result:
+            unique.setdefault(version.id, version)
+
+        return list(unique.values())
+
+@dataclass(frozen=True)
+class JavaRuntime:
+    id: str
+    major_version: int
+    raw_version: str
+    executable: Path
+    home_dir: Path
+    source: Literal["system", "managed", "custom"]
+    component: str | None = None
+    valid: bool = True
+
+    def to_dict(self) -> dict:
+        return {
+            "id": self.id,
+            "major": self.major_version,
+            "raw": self.raw_version,
+            "executable": self.executable.as_posix(),
+            "homeDir": self.home_dir.as_posix(),
+            "source": self.source,
+            "component": self.component,
+        }
+
+@dataclass(frozen=True)
+class InstallableJavaRuntime:
+    component: str
+    major_version: int | None
+    raw_version: str | None
+    released: str | None = None
+
 class JavaManager:
     def __init__(self, app):
         self.app = app
         self.widget_mgr = app.widget_manager
+        self.runtimes: list[JavaRuntime] = self._read_runtimes()
 
     #
     # JVM Management
@@ -317,81 +429,210 @@ class JavaManager:
     def jvm_settings_path(self) -> Path:
         return Path(self.app.work_dir) / "jvms.json"
 
-    def _find_and_save_jvm_search_result(self):
-        installations, errors = find_java_installations()
-        if not installations:
-            self.widget_mgr.signal.show_warning_message.emit(
-                "There are no Java installations available in you system.\n"
-            )
+    @staticmethod
+    def _runtime_from_dict(data: dict) -> JavaRuntime:
+        """
+        Convert runtime data to JavaRuntime object
+        :param data:
+        :return:
+        """
+        executable = Path(data["executable"])
+        home_dir = Path(data.get("homeDir") or data.get("home_dir") or executable.parent.parent)
+
+        return JavaRuntime(
+            id=str(data.get("id") or uuid4()),
+            major_version=int(data["major"]),
+            raw_version=str(data.get("raw") or data["major"]),
+            executable=executable,
+            home_dir=home_dir,
+            source=data.get("source") or "system",
+            component=data.get("component"),
+            valid=executable.is_file(),
+        )
+
+    def _read_runtimes(self) -> list[JavaRuntime]:
+        """
+        Read existing runtime data from jvms.json
+        :return:
+        """
+        if not self.jvm_settings_path.is_file():
+            return []
+        try:
+            data = json.loads(self.jvm_settings_path.read_text(encoding="utf-8"))
+
+            if not isinstance(data, list):
+                raise ValueError("JVM settings root must be a list")
+
+            return [self._runtime_from_dict(item) for item in data if isinstance(item, dict)]
+        except (OSError, ValueError, KeyError, TypeError) as exc:
+            self.app.logger.warning(f"Unable to read JVM settings: {exc}")
             return []
 
-        if errors:
-            request = AskForRequest("Java Virtual Machine Finder", message = (
-                "Unable to detect below java installation version:\n"
-            ))
-            request.details = "\n".join(path.as_posix() for path in errors)
-            request.use_plain_text = True
-
-            self.widget_mgr.signal.askyesno.emit(request)
-
+    def save_runtimes(self) -> None:
+        """
+        Save memory runtimes to jvms.json
+        :return:
+        """
         self.jvm_settings_path.parent.mkdir(parents=True, exist_ok=True)
 
-        try:
-            with self.jvm_settings_path.open("w") as file:
-                json.dump(installations, file, indent=4)
+        temporary = self.jvm_settings_path.with_suffix(".json.tmp")
+        temporary.write_text(
+            json.dumps([runtime.to_dict() for runtime in self.runtimes], indent=4),
+            encoding="utf-8",
+        )
 
-            return installations
-        except Exception as e:
-            self.widget_mgr.signal.show_and_print_error_message.emit(
-                {
-                    "error": traceback.format_exception(e),
-                    "title": "Settings Error",
-                    "message": "An error occurred while attempting to save jvm settings. Please try again.",
-                }
-            )
+        temporary.replace(self.jvm_settings_path)
 
-    def _read_exist_jvm_settings(self):
-        try:
-            return json.loads(self.jvm_settings_path.read_text())
-        except Exception as e:
-            self.widget_mgr.signal.show_and_print_error_message.emit(
-                {
-                    "error": traceback.format_exception(e),
-                    "title": "Settings Error",
-                    "message": "An error occurred while reading jvm settings.",
-                }
-            )
+    @staticmethod
+    def inspect_runtime(executable: str | Path,
+                        *,
+                        source: Literal["system", "managed", "custom"] = "custom",
+                        component: str | None = None,
+                        runtime_id: str | None = None,
+                        ) -> JavaRuntime:
+        """
+        Check runtime version
+        :param executable:
+        :param source:
+        :param component:
+        :param runtime_id:
+        :return:
+            runtime: JavaRuntime
+        """
+        executable = Path(executable).expanduser().resolve()
+
+        if not executable.is_file():
+            raise JavaRuntimeException(f"Java executable does not exist: {executable}")
+
+        major, raw = get_java_version(executable)
+        return JavaRuntime(
+            id=runtime_id or uuid4().hex,
+            major_version=major,
+            raw_version=raw,
+            executable=executable,
+            home_dir=executable.parent.parent,
+            source=source,
+            component=component,
+        )
+
+    def discover_runtimes(self, extra_install_patterns: list | None = None) -> tuple[list[JavaRuntime], list[Path]]:
+        """
+        Find available runtimes
+        :param extra_install_patterns:
+        :return:
+            discovered: list[JavaRuntime]
+            errors: list[Path]
+        """
+        installations, errors = find_java_installations(extra_install_patterns)
+        known_ids = {runtime.executable.resolve(): runtime.id for runtime in self.runtimes}
+
+        discovered = []
+        for item in installations:
+            executable = Path(item["executable"]).resolve()
+
+            discovered.append(self._runtime_from_dict({
+                **item,
+                "id": known_ids.get(executable, uuid4().hex),
+                "source": "system",
+            }))
+
+        return discovered, errors
+
+    def refresh_runtimes(self, extra_install_patterns: list | None = None) -> tuple[list[JavaRuntime], list[Path]]:
+        """
+        Discover available runtimes and save
+        :param extra_install_patterns:
+        :return:
+            runtimes: list[JavaRuntime]
+            errors: list[Path]
+        """
+        discovered, errors = self.discover_runtimes(extra_install_patterns)
+        retained = [runtime for runtime in self.runtimes if runtime.source != "system"]
+        by_executable = {runtime.executable.resolve(): runtime for runtime in retained}
+
+        for runtime in discovered:
+            by_executable.setdefault(runtime.executable.resolve(), runtime)
+
+        self.runtimes = list(by_executable.values())
+        self.save_runtimes()
+        return list(self.runtimes), errors
+
+    def register_runtime(self, executable: str | Path) -> JavaRuntime:
+        """
+        Register runtime to manage's runtimes
+        :param executable:
+        :return:
+        """
+        candidate = Path(executable).expanduser().resolve()
+
+        for runtime in self.runtimes:
+            if runtime.executable.resolve() == candidate:
+                return runtime
+
+        runtime = self.inspect_runtime(candidate, source="custom")
+        self.runtimes.append(runtime)
+        self.save_runtimes()
+        return runtime
+
+    @staticmethod
+    def _runtime_major_version(raw_version: str | None) -> int | None:
+        if not raw_version:
             return None
+        match = re.match(r"^(?:1\.)?(\d+)", raw_version)
+        return int(match.group(1)) if match else None
 
-    def get_or_cache_jvm_settings(self) -> list:
-        if self.jvm_settings_path.exists():
-            exists = self._read_exist_jvm_settings()
+    def list_installable_runtimes(self) -> list[InstallableJavaRuntime]:
+        """Return Mojang components with the Java version carried by each one."""
+        manifest = fetch_runtime_manifest()
+        platform_key = get_current_platform_runtime_key()
+        if not platform_key:
+            return []
+        platform_runtimes = manifest.get(platform_key, {})
+        result = []
+        for component, versions in platform_runtimes.items():
+            if not isinstance(versions, list) or not versions:
+                continue
+            latest = versions[0] if isinstance(versions[0], dict) else {}
+            version = latest.get("version") or {}
+            raw_version = version.get("name")
+            result.append(InstallableJavaRuntime(
+                component=component,
+                major_version=self._runtime_major_version(raw_version),
+                raw_version=raw_version,
+                released=version.get("released"),
+            ))
+        return sorted(result, key=lambda item: (item.major_version or -1, item.component), reverse=True)
 
-            if exists:
-                return exists
+    def list_installable_components(self) -> list[str]:
+        """Compatibility API returning component names only."""
+        return [runtime.component for runtime in self.list_installable_runtimes()]
 
-        return self._find_and_save_jvm_search_result()
+    def unregister_runtime(self, runtime_id: str) -> bool:
+        """
+        Remove runtime from manage's runtimes
+        :param runtime_id:
+        :return:
+        """
+        original_count = len(self.runtimes)
+        self.runtimes = [runtime for runtime in self.runtimes if runtime.id != runtime_id]
+
+        changed = len(self.runtimes) != original_count
+
+        if changed:
+            self.save_runtimes()
+
+        return changed
+
+    def get_or_cache_jvm_settings(self) -> list[dict]:
+        if not self.runtimes:
+            self.refresh_runtimes()
+
+        return [runtime.to_dict() for runtime in self.runtimes]
 
     def get_support_runtime_jvm_executable(self, major_version: int | str, no_error: bool=False) -> str | None:
-        result = self.get_or_cache_jvm_settings()
-
-        if not result:
-            return None
-
-        for item in result:
-            version = item.get("major", None)
-            executable = item.get("executable", None)
-
-            try:
-                version = str(version)
-                major_version = str(major_version)
-            except Exception as e:
-                self.app.logger.warning(
-                    f"Unable to convert version {version} to string: {e}"
-                )
-
-            if major_version == version and executable:
-                return executable
+        runtime = self.resolve_runtime(major_version=int(major_version))
+        if runtime:
+            return runtime.executable.as_posix()
 
         if not no_error:
             self.widget_mgr.signal.show_error_message.emit(
@@ -399,6 +640,81 @@ class JavaManager:
             )
 
         return None
+
+    def list_runtimes(self, *, refresh: bool = False) -> list[JavaRuntime]:
+        if refresh:
+            self.refresh_runtimes()
+        return list(self.runtimes)
+
+    def resolve_runtime(self, *, manifest: dict | None = None, major_version: int | None = None,
+                        preferred_runtime_id: str | None = None) -> JavaRuntime | None:
+        java_requirement = (manifest or {}).get("javaVersion", {})
+        required_major = major_version or java_requirement.get("majorVersion")
+
+        if required_major is None:
+            return None
+
+        runtimes = self.list_runtimes()
+        if not runtimes:
+            runtimes, _ = self.refresh_runtimes()
+
+        if preferred_runtime_id:
+            preferred = next((item for item in runtimes if item.id == preferred_runtime_id), None)
+            if preferred and preferred.valid and preferred.major_version == int(required_major):
+                return preferred
+
+        source_order = {"managed": 0, "custom": 1, "system": 2}
+        matches = [item for item in runtimes if item.valid and item.major_version == int(required_major)]
+        return min(matches, key=lambda item: source_order[item.source], default=None)
+
+    @property
+    def launcher_runtime_dir(self) -> Path:
+        return Path(self.app.work_dir) / "runtimes"
+
+    def install_runtime(self, component: str, *, progress_callback=None, redownload_callback=None) -> JavaRuntime:
+        destination = self.launcher_runtime_dir / component
+        download_java_runtimes(
+            component,
+            destination,
+            progress_callback=progress_callback,
+            redownload_callback=redownload_callback,
+        )
+        executable_name = "java.exe" if sys.platform == "win32" else "java"
+        candidates = sorted(destination.rglob(executable_name))
+        if not candidates:
+            raise JavaRuntimeException(f"Installed runtime has no {executable_name}: {destination}")
+        runtime = self.inspect_runtime(candidates[0], source="managed", component=component)
+        self.runtimes = [item for item in self.runtimes if item.executable.resolve() != runtime.executable.resolve()]
+        self.runtimes.append(runtime)
+        self.save_runtimes()
+        return runtime
+
+    def ensure_runtime(self, manifest: dict, *, auto_install: bool = False, progress_callback=None,
+                       redownload_callback=None) -> JavaRuntime:
+        runtime = self.resolve_runtime(manifest=manifest)
+
+        if runtime:
+            return runtime
+
+        requirement = manifest.get("javaVersion") or {}
+        component = requirement.get("component")
+        major = requirement.get("majorVersion")
+
+        if not auto_install or not component:
+            raise JavaRuntimeException(f"No compatible Java runtime found (required major version: {major})")
+
+        runtime = self.install_runtime(
+            component,
+            progress_callback=progress_callback,
+            redownload_callback=redownload_callback,
+        )
+        if major is not None and runtime.major_version != int(major):
+            raise JavaRuntimeException(
+                f"Installed Java {runtime.major_version}, but Minecraft requires Java {major}"
+            )
+
+        return runtime
+
 
 class GameFileDownloadRequest(SignalTransferItem):
     def __init__(self, job_name: Literal["download_client", "download_libraries", "download_assets"],
@@ -650,6 +966,7 @@ class LaunchResult:
     process: subprocess.Popen | None = None
     error_message: str | None = None
     warnings: list[str] = field(default_factory=list)
+    fail_callback: Callable | None = None
 
     @property
     def success(self) -> bool:
@@ -657,6 +974,8 @@ class LaunchResult:
 
     def fail(self, message: str) -> "LaunchResult":
         self.error_message = message
+        if callable(self.fail_callback):
+            self.fail_callback()
         return self
 
     def add_warning(self, message: str) -> None:
@@ -680,6 +999,11 @@ class LaunchManager:
 
     def launch(self, profile: LaunchProfile) -> LaunchResult:
         result = LaunchResult()
+
+        def fail_callback():
+            self.profile_failed(profile.profile_id)
+
+        result.fail_callback = fail_callback
         try:
             version_id = profile.version_id
             version_id = self.manifest_mgr.resolve_version_alias(version_id)
@@ -815,11 +1139,37 @@ class LaunchManager:
                     "Unable to parse arguments because data are invalid."
                 )
 
-            # Use found java runtime (if available)
-            java_path = self.java_mgr.get_support_runtime_jvm_executable(
-                java_major_version,
-                no_error=True
-            )
+            # Resolve a compatible runtime, then offer the Mojang runtime from
+            # the version manifest before falling back to a custom executable.
+            runtime = self.java_mgr.resolve_runtime(manifest=version_manifest)
+            java_path = runtime.executable.as_posix() if runtime else None
+
+            if not java_path:
+                component = java_version.get("component")
+                if component:
+                    install_request = AskForRequest(
+                        "Java Runtime Required",
+                        f"Minecraft {version_id} requires Java {java_major_version}. "
+                        f"Download the Mojang runtime now?",
+                    )
+                    self.widget_mgr.signal.askyesno.emit(install_request)
+                    if install_request.wait(120) and install_request.result():
+                        callback, task_id = self.manifest_mgr.create_download_progress_callback(
+                            f"Installing Java {java_major_version}"
+                        )
+                        try:
+                            runtime = self.java_mgr.ensure_runtime(
+                                version_manifest,
+                                auto_install=True,
+                                progress_callback=callback,
+                                redownload_callback=self.game_file_mgr.redownload_files,
+                            )
+                        except Exception as exc:
+                            self.widget_mgr.download_signal.failed.emit(task_id, str(exc))
+                            self.app.logger.warning(f"Automatic Java installation failed: {exc}")
+                        else:
+                            self.widget_mgr.download_signal.finished.emit(task_id)
+                            java_path = runtime.executable.as_posix()
 
             if not java_path:
                 # Ask for a support java version. If not, use system environment java
@@ -840,10 +1190,19 @@ class LaunchManager:
                 java_path = request.result()
 
                 if java_path:
+                    try:
+                        runtime = self.java_mgr.register_runtime(java_path)
+                    except JavaRuntimeException as exc:
+                        return result.fail(f"The selected Java executable is invalid: {exc}")
+                    if runtime.major_version != int(java_major_version):
+                        return result.fail(
+                            f"Minecraft requires Java {java_major_version}, but the selected executable is "
+                            f"Java {runtime.major_version}."
+                        )
+                    java_path = runtime.executable.as_posix()
                     self.app.logger.debug(f"Use specified java executable path: {java_path}")
                 else:
-                    self.app.logger.debug("Use system environment java.")
-                    java_path = "java"
+                    return result.fail(f"Java {java_major_version} is required to launch this version.")
 
             self.app.logger.debug(f"Java executable path is: {java_path}")
 
@@ -913,9 +1272,29 @@ class LaunchManager:
                 or profile_id in self.launched_profiles
         )
 
+    def profile_failed(self, profile_id: str) -> None:
+        try:
+            self.launched_profiles.remove(profile_id)
+        except ValueError:
+            pass
+
+        try:
+            self.launching_profiles.remove(profile_id)
+        except ValueError:
+            pass
+
+        self.app.logger.debug(
+            f"Profile {profile_id} exited."
+        )
+
     def profile_finished(self, profile_id: str, exit_code: int) -> None:
         try:
             self.launched_profiles.remove(profile_id)
+        except ValueError:
+            pass
+
+        try:
+            self.launching_profiles.remove(profile_id)
         except ValueError:
             pass
 

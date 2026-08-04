@@ -82,3 +82,38 @@ QLabel#settingsVersion {
 QPlainTextEdit#settingsDescription {
     font-size: 13px;
 }
+
+QWidget#settingsPage QComboBox {
+    min-height: 22px;
+    padding: 6px 32px 6px 10px;
+    border: 1px solid palette(mid);
+    border-radius: 6px;
+    background-color: palette(base);
+    color: palette(text);
+    selection-background-color: palette(highlight);
+    selection-color: palette(highlighted-text);
+}
+
+QWidget#settingsPage QComboBox:hover {
+    border-color: palette(highlight);
+}
+
+QWidget#settingsPage QComboBox:focus {
+    border: 2px solid palette(highlight);
+    padding: 5px 31px 5px 9px;
+}
+
+/*QWidget#settingsPage QComboBox::drop-down {*/
+/*    width: 28px;*/
+/*    border: none;*/
+/*    border-left: 1px solid palette(mid);*/
+/*}*/
+
+QWidget#settingsPage QComboBox QAbstractItemView {
+    border: 1px solid palette(mid);
+    background-color: palette(base);
+    color: palette(text);
+    selection-background-color: palette(highlight);
+    selection-color: palette(highlighted-text);
+    outline: none;
+}

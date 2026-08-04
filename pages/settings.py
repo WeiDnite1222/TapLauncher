@@ -111,8 +111,43 @@ class SettingsPage(QWidget):
         root_layout.addWidget(self.stack)
         self.app.apply_qss(Path("settings.qss"), self.setStyleSheet)
         self.language_combo.currentIndexChanged.connect(self._mark_settings_dirty)
-        self.theme_combo.currentIndexChanged.connect(self._mark_settings_dirty)
         self.client_id_edit.textEdited.connect(self._mark_settings_dirty)
+
+        self.theme_combo.currentIndexChanged.connect(
+            self._apply_selected_theme
+        )
+        self.app.i18n.language_changed.connect(self.retranslate_ui)
+
+    def _apply_selected_theme(self) -> None:
+        theme = self.theme_combo.currentData()
+        self.app.apply_theme(theme)
+        self._mark_settings_dirty()
+
+    def retranslate_ui(self, *_args) -> None:
+        """Rebuild this page so every label uses the active catalog."""
+        current_page = self.stack.currentIndex()
+        while self.stack.count():
+            old_page = self.stack.widget(0)
+            self.stack.removeWidget(old_page)
+            old_page.deleteLater()
+
+        self.main_page = self._create_main_page()
+        self.general_page = self._create_general_page()
+        self.appearance_page = self._create_appearance_page()
+        self.account_page = self._create_account_page()
+        self.about_page = self._create_about_page()
+        for page in (
+            self.main_page,
+            self.general_page,
+            self.appearance_page,
+            self.account_page,
+            self.about_page,
+        ):
+            self.stack.addWidget(page)
+        self.stack.setCurrentIndex(min(current_page, self.stack.count() - 1))
+        self.language_combo.currentIndexChanged.connect(self._mark_settings_dirty)
+        self.client_id_edit.textEdited.connect(self._mark_settings_dirty)
+        self.theme_combo.currentIndexChanged.connect(self._apply_selected_theme)
 
     def _create_main_page(self) -> QWidget:
         page = QWidget()
@@ -132,16 +167,17 @@ class SettingsPage(QWidget):
         scroll_layout.setContentsMargins(24, 20, 24, 24)
         scroll_layout.setSpacing(12)
 
-        title = QLabel("Settings")
+        tr = self.app.tr_text
+        title = QLabel(tr("Settings"))
         title.setObjectName("settingsPageTitle")
         scroll_layout.addWidget(title)
         scroll_layout.addSpacing(8)
 
         pages = (
-            ("General", "Language and launcher directories", "general_page"),
-            ("Appearance", "Launcher theme", "appearance_page"),
-            ("Account", "Microsoft authentication settings", "account_page"),
-            ("About", "Version and project information", "about_page"),
+            (tr("General"), tr("Language and launcher directories"), "general_page"),
+            (tr("Appearance"), tr("Launcher theme"), "appearance_page"),
+            (tr("Account"), tr("Microsoft authentication settings"), "account_page"),
+            (tr("About"), tr("Version and project information"), "about_page"),
         )
         for title_text, description, page_name in pages:
             button = SettingsItem(title_text, description)
@@ -157,21 +193,22 @@ class SettingsPage(QWidget):
         return page
 
     def _create_general_page(self) -> QWidget:
-        page = SettingsSubPage("General", self._go_back)
+        tr = self.app.tr_text
+        page = SettingsSubPage(tr("General"), self._go_back)
         current = self.settings.get("general", GeneralSettings)
 
-        page.content_layout.addWidget(QLabel("Current launcher working directory"))
+        page.content_layout.addWidget(QLabel(tr("Current launcher working directory")))
         launcher_dir = QLineEdit(self.app.work_dir.as_posix())
         launcher_dir.setReadOnly(True)
         page.content_layout.addWidget(launcher_dir)
 
-        page.content_layout.addWidget(QLabel("Current program directory"))
+        page.content_layout.addWidget(QLabel(tr("Current program directory")))
         program_dir = QLineEdit(self.app.program_dir.as_posix())
         program_dir.setReadOnly(True)
         page.content_layout.addWidget(program_dir)
 
         page.content_layout.addSpacing(8)
-        page.content_layout.addWidget(QLabel("Language"))
+        page.content_layout.addWidget(QLabel(tr("Language")))
         self.language_combo = self._choice_combo(
             "general", "language", LANGUAGE_LABELS, current.language
         )
@@ -179,10 +216,11 @@ class SettingsPage(QWidget):
         return page
 
     def _create_appearance_page(self) -> QWidget:
-        page = SettingsSubPage("Appearance", self._go_back)
+        tr = self.app.tr_text
+        page = SettingsSubPage(tr("Appearance"), self._go_back)
         current = self.settings.get("appearance", AppearanceSettings)
 
-        page.content_layout.addWidget(QLabel("Theme"))
+        page.content_layout.addWidget(QLabel(tr("Theme")))
         self.theme_combo = self._choice_combo(
             "appearance", "theme", THEME_LABELS, current.theme
         )
@@ -190,30 +228,32 @@ class SettingsPage(QWidget):
         return page
 
     def _create_account_page(self) -> QWidget:
-        page = SettingsSubPage("Account", self._go_back)
+        tr = self.app.tr_text
+        page = SettingsSubPage(tr("Account"), self._go_back)
         current = self.settings.get("account", AccountSettings)
 
-        page.content_layout.addWidget(QLabel("Microsoft OAuth Client ID"))
+        page.content_layout.addWidget(QLabel(tr("Microsoft OAuth Client ID")))
         self.client_id_edit = QLineEdit(str(current.client_id))
         self.client_id_edit.setPlaceholderText(
             "xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx"
         )
         page.content_layout.addWidget(self.client_id_edit)
 
-        help_label = QLabel(
+        help_label = QLabel(tr(
             "The Client ID must belong to an Azure application configured "
             "for Microsoft device-code authentication."
-        )
+        ))
         help_label.setObjectName("settingsHelpText")
         help_label.setWordWrap(True)
         page.content_layout.addWidget(help_label)
         return page
 
     def _create_about_page(self) -> QWidget:
-        page = SettingsSubPage("About", self._go_back)
+        tr = self.app.tr_text
+        page = SettingsSubPage(tr("About"), self._go_back)
         brand_label = QLabel(LAUNCHER_NAME)
         brand_label.setObjectName("settingsBrand")
-        version_label = QLabel(f"Version: {LAUNCHER_VERSION}")
+        version_label = QLabel(tr("Version: {version}", version=LAUNCHER_VERSION))
         version_label.setObjectName("settingsVersion")
         description = QPlainTextEdit(LAUNCHER_DESCRIPTION)
         description.setObjectName("settingsDescription")
@@ -233,7 +273,10 @@ class SettingsPage(QWidget):
     ) -> QComboBox:
         combo = QComboBox()
         for value in self.settings.choices(section, field):
-            combo.addItem(labels.get(value, str(value)), value)
+            combo.addItem(
+                self.app.tr_text(labels.get(value, str(value))),
+                value,
+            )
         index = combo.findData(current)
         combo.setCurrentIndex(max(index, 0))
         return combo
@@ -257,10 +300,12 @@ class SettingsPage(QWidget):
             self.settings.save()
         except Exception as error:
             if show_error:
-                QMessageBox.critical(self, "Settings error", str(error))
+                QMessageBox.critical(self, self.app.tr_text("Settings error"), str(error))
             return False
 
         self._settings_dirty = False
+        selected_language = data["general"]["language"]
+        self.app.apply_language(selected_language)
         return True
 
     def _open_page(self, page: QWidget) -> None:

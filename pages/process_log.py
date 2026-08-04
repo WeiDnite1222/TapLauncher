@@ -31,24 +31,25 @@ class ProcessLogWindow(QMainWindow):
     A Simple client log view
     """
 
-    def __init__(self, process: subprocess.Popen, profile_id: str, title: str = "Game Log",
+    def __init__(self, app, process: subprocess.Popen, profile_id: str, title: str = "Game Log",
                  parent: QWidget | None = None, finished_callback: Callable[[str, int], None]=None) -> None:
         super().__init__(parent)
+        self.app = app
         self.process = process
         self.profile_id = profile_id
         self._signals = _ProcessSignals(self)
         self._last_error_message: str | None = None
         self._stderr_lines: deque[str] = deque(maxlen=500)
 
-        self.setWindowTitle(title)
+        self.setWindowTitle(self.app.tr_text(title))
         self.resize(700, 720)
 
         container = QWidget(self)
         layout = QVBoxLayout(container)
         controls = QHBoxLayout()
 
-        self.status_label = QLabel(f"Running (PID {process.pid})")
-        self.kill_button = QPushButton("Kill Process")
+        self.status_label = QLabel(self.app.tr_text("Running (PID {pid})", pid=process.pid))
+        self.kill_button = QPushButton(self.app.tr_text("Kill Process"))
         self.kill_button.clicked.connect(self.kill_process)
 
         self.log_output = QPlainTextEdit()
@@ -135,18 +136,20 @@ class ProcessLogWindow(QMainWindow):
             return
 
         self.kill_button.setEnabled(False)
-        self.status_label.setText("Killing process...")
+        self.status_label.setText(self.app.tr_text("Killing process..."))
 
         try:
             self.process.kill()
         except Exception as exc:
             self.kill_button.setEnabled(True)
-            self.status_label.setText("Unable to kill process")
+            self.status_label.setText(self.app.tr_text("Unable to kill process"))
             self.append_message(f"[launcher] Unable to kill process: {exc}")
 
     def _process_finished(self, exit_code: int) -> None:
         self.kill_button.setEnabled(False)
-        self.status_label.setText(f"Process exited with code {exit_code}")
+        self.status_label.setText(self.app.tr_text(
+            "Process exited with code {exit_code}", exit_code=exit_code
+        ))
         self.append_message(f"[launcher] Process exited with code {exit_code}.")
 
         if exit_code != 0 and self._last_error_message:
@@ -164,8 +167,10 @@ class ProcessLogWindow(QMainWindow):
 
             messagebox.error_with_plain_text(
                 self,
-                title="Minecraft Client Error",
-                message=f"Minecraft exited with code {exit_code}.",
+                title=self.app.tr_text("Minecraft Client Error"),
+                message=self.app.tr_text(
+                    "Minecraft exited with code {exit_code}.", exit_code=exit_code
+                ),
                 content=error_content,
             )
 

@@ -208,7 +208,7 @@ class LaunchProfilePage(QWidget):
         self.bottom_layout = QHBoxLayout()
 
         # Widgets
-        self.status_label = QLabel("Select a profile to launch")
+        self.status_label = QLabel(self.app.tr_text("Select a profile to launch"))
         self.status_label.setStyleSheet("font-size: 12px; font-weight: 600;")
         self.status_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
 
@@ -221,7 +221,7 @@ class LaunchProfilePage(QWidget):
         self.profile_popup.profile_selected.connect(self.select_profile)
         self.profile_popup.closed.connect(self.refresh_profile_button)
 
-        launch_button = QPushButton("Launch Game")
+        launch_button = QPushButton(self.app.tr_text("Launch Game"))
         launch_button.setObjectName("launchButton")
         launch_button.setMinimumWidth(120)
         launch_button.setMinimumHeight(42)
@@ -258,7 +258,7 @@ class LaunchProfilePage(QWidget):
         # self.profile_frame.setGraphicsEffect(shadow)
 
         # Header
-        self.header_label = QLabel("Launch Profile")
+        self.header_label = QLabel(self.app.tr_text("Launch Profile"))
         self.header_label.setObjectName("headerLabel")
 
         self.header_layout = QHBoxLayout(self.profile_overlay)
@@ -322,16 +322,20 @@ class LaunchProfilePage(QWidget):
         :return:
         """
         if not result.success:
-            self.status_label.setText("Launch Failed")
+            self.status_label.setText(self.app.tr_text("Launch Failed"))
             self.widget_mgr.signal.show_error_message.emit(
-                f"Unable to launch profile "
-                f"{launch_profile.display_name}: "
-                f"{result.error_message}"
+                self.app.tr_text(
+                    "Unable to launch profile {profile}: {error}",
+                    profile=launch_profile.display_name,
+                    error=result.error_message,
+                )
             )
+            self.status_label_cleanup()
             return
 
         # Create log view
         log_window = ProcessLogWindow(
+            self.app,
             result.process,
             launch_profile.profile_id,
             title=(
@@ -350,12 +354,17 @@ class LaunchProfilePage(QWidget):
         self.process_log_windows.append(log_window)
         log_window.show()
 
-        self.status_label.setText("Launched!")
+        self.status_label.setText(self.app.tr_text("Launched!"))
 
         # Cleanup for status label
+        self.status_label_cleanup()
+
+    def status_label_cleanup(self):
         timer = QTimer(self)
         timer.setSingleShot(True)
-        timer.timeout.connect(lambda: self.status_label.setText("Select a profile to launch"))
+        timer.timeout.connect(lambda: self.status_label.setText(
+            self.app.tr_text("Select a profile to launch")
+        ))
         timer.start(3000)
 
     def load_profiles(self):
@@ -364,7 +373,7 @@ class LaunchProfilePage(QWidget):
 
         if not profiles:
             self.profile_button.setProperty("profile_id", None)
-            self.profile_button.name_label.setText("No profiles available")
+            self.profile_button.name_label.setText(self.app.tr_text("No profiles available"))
             self.profile_button.version_label.clear()
             return
 
@@ -441,30 +450,30 @@ class LaunchProfilePage(QWidget):
 
         if profile_id is None:
             self.widget_mgr.signal.show_warning_message.emit(
-                "There is no profile is selected."
-                " Please create one first."
+                self.app.tr_text("There is no profile is selected. Please create one first.")
             )
             return
 
-        self.status_label.setText("Preparing to launch...")
+        self.status_label.setText(self.app.tr_text("Preparing to launch..."))
         launch_profile = self.app.profile_manager.get_launch_profile(profile_id)
 
         if launch_profile is None:
-            self.status_label.setText("Unable to load the selected profile.")
+            self.status_label.setText(self.app.tr_text("Unable to load the selected profile."))
             return
 
         if self.launch_manager.is_profile_running(launch_profile.profile_id):
             request = AskForRequest(
-                "Launch Request",
-                "Target profile {} is running. Are you sure you want to launch it again?".format(
-                    launch_profile.display_name
+                self.app.tr_text("Launch Request"),
+                self.app.tr_text(
+                    "Target profile {profile} is running. Are you sure you want to launch it again?",
+                    profile=launch_profile.display_name,
                 ),
             )
             self.widget_mgr.signal.askyesno.emit(request)
 
             if not request.wait(60):
                 self.widget_mgr.signal.show_error_message.emit(
-                    "Time out waiting for request for launch."
+                    self.app.tr_text("Time out waiting for request for launch.")
                 )
                 return
 

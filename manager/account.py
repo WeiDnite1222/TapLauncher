@@ -739,8 +739,8 @@ class AccountManager(QObject):
         # Ask user before actually delete
         answer = QMessageBox.question(
             self.app.main_window,
-            "Delete all accounts",
-            "Delete every saved account? This cannot be undone.",
+            self.app.tr_text("Delete all accounts"),
+            self.app.tr_text("Delete every saved account? This cannot be undone."),
             QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
             QMessageBox.StandardButton.No,
         )

@@ -1,15 +1,17 @@
 import sys
+from _colorize import Theme
 from pathlib import Path
 from typing import Callable
 
 from PySide6.QtCore import QSize
-from PySide6.QtGui import QIcon, QPixmap
-from PySide6.QtWidgets import QApplication, QStyle
+from PySide6.QtGui import QIcon, QPixmap, QPalette, QColor
+from PySide6.QtWidgets import QApplication, QStyle, QToolButton
 
 from constant import LAUNCHER_VERSION
 from core_lib.qt.hack import move_window_to_center, is_light_theme, \
     recolor_icon
 from core_lib.qt import messagebox
+from core_lib.i18n import TranslationManager
 from core_lib.launcher.object import Launcher as LauncherObject
 from manager.account import AccountManager
 from manager.game import GameManager
@@ -22,6 +24,8 @@ from window import LauncherMainWindow
 class Launcher(QApplication, LauncherObject):
     def __init__(self, logger, debug: bool = False):
         super().__init__()
+        self._system_palette = QPalette(self.palette()) # theme
+
         # logger
         self.logger = logger
         self.debug = debug
@@ -41,6 +45,15 @@ class Launcher(QApplication, LauncherObject):
             self.settings_manager.load()
         else:
             self.settings_manager.load_defaults().save()
+
+        general = self.settings_manager.get("general", GeneralSettings)
+        self.i18n = TranslationManager(
+            self.resources_dir / "translations",
+            general.language,
+        )
+
+        self.apply_theme()
+
         self.profile_manager = ProfileManager(self, self.widget_manager)
         self.account_manager = AccountManager(self, self.widget_manager)
         self.game_manager = GameManager(self)
@@ -73,8 +86,8 @@ class Launcher(QApplication, LauncherObject):
         if not path.exists() or not path.is_file():
             messagebox.error(
                 self.main_window,
-                "Resource Error",
-                "Missing icon file: {}".format(path)
+                self.tr_text("Resource Error"),
+                self.tr_text("Missing icon file: {path}", path=path)
             )
 
             return icon
@@ -89,19 +102,58 @@ class Launcher(QApplication, LauncherObject):
         except Exception as e:
             messagebox.error(
                 self.main_window,
-                "Resource Error",
-                "Failed to load icon {}: {}".format(path, e)
+                self.tr_text("Resource Error"),
+                self.tr_text("Failed to load icon {path}: {error}", path=path, error=e)
             )
 
         return icon
+
+    def tr_text(self, key: str, /, **values) -> str:
+        """Translate a stable English source string for the active language."""
+        return self.i18n.translate(key, **values)
+
+    def apply_language(self, language: str) -> None:
+        if language != self.i18n.language:
+            self.i18n.set_language(language)
+            messagebox.info(None,"Launcher",
+                            self.tr_text("To make all page apply new language."
+                                         " Is recommend to restart the launcher after change it."))
+
+    def set_reloadable_toolbutton_icon(
+        self,
+        button: QToolButton,
+        path: Path,
+        no_color_change: bool = False,
+    ) -> None:
+        """Set an icon and retain its source so theme changes can reload it."""
+        button.setProperty("themeIconPath", str(path))
+        button.setProperty("themeIconNoColorChange", no_color_change)
+        button.setIcon(self.get_icon(path, no_color_change))
+
+    def reload_toolbutton_icons(self) -> None:
+        for button in self.allWidgets():
+            if not isinstance(button, QToolButton):
+                continue
+
+            path = button.property("themeIconPath")
+            if not path:
+                continue
+
+            no_color_change = bool(
+                button.property("themeIconNoColorChange")
+            )
+            button.setIcon(
+                self.get_icon(Path(path), no_color_change)
+            )
 
     def get_picture(self, path: Path, size: QSize, custom_error: str=None) -> QPixmap:
         picture = self.style().standardIcon(QStyle.StandardPixmap.SP_MessageBoxWarning).pixmap(size)
         if not path.exists() or not path.is_file():
             messagebox.error(
                 self.main_window,
-                "Resource Error",
-                "Missing icon file: {}".format(path) if not custom_error else custom_error
+                self.tr_text("Resource Error"),
+                self.tr_text("Missing icon file: {path}", path=path)
+                if not custom_error else custom_error
             )
 
             return picture
@@ -111,8 +163,8 @@ class Launcher(QApplication, LauncherObject):
         except Exception as e:
             messagebox.error(
                 self.main_window,
-                "Resource Error",
-                "Failed to load icon {}: {}".format(path, e)
+                self.tr_text("Resource Error"),
+                self.tr_text("Failed to load icon {path}: {error}", path=path, error=e)
             )
 
         return picture
@@ -167,8 +219,8 @@ class Launcher(QApplication, LauncherObject):
         if not full_path.exists():
             messagebox.error(
                 None,
-                "Resource Error",
-                "Missing stylesheet file: {}".format(full_path),
+                self.tr_text("Resource Error"),
+                self.tr_text("Missing stylesheet file: {path}", path=full_path),
             )
             return ""
 
@@ -178,11 +230,86 @@ class Launcher(QApplication, LauncherObject):
         except Exception as e:
             messagebox.error(
                 self.main_window,
-                "Resource Error",
-                "Unable to apply QSS stylesheet {}: {}".format(full_path, e),
+                self.tr_text("Resource Error"),
+                self.tr_text(
+                    "Unable to apply QSS stylesheet {path}: {error}",
+                    path=full_path,
+                    error=e,
+                ),
             )
 
         return ""
 
     def get_main_window(self):
         return self.main_window
+
+    def apply_theme(self, theme: Theme | None=None):
+        if not theme:
+            appearance = self.settings_manager.get("appearance", AppearanceSettings)
+
+            theme = appearance.theme
+
+        if theme == "system":
+            palette = self._system_palette
+        elif theme == "dark":
+            palette = self._dark_palette()
+        elif theme == "light":
+            palette = self._light_palette()
+        else:
+            raise ValueError(f"Unsupported theme: {theme}")
+
+        self.setPalette(palette)
+
+        for widget in self.allWidgets():
+            widget.style().unpolish(widget)
+            widget.style().polish(widget)
+            widget.update()
+
+        if hasattr(self, "main_window"):
+            self.reload_toolbutton_icons()
+            self.main_window.toolbar.update_all()
+
+    @staticmethod
+    def _light_palette() -> QPalette:
+        palette = QPalette()
+
+        palette.setColor(QPalette.ColorRole.Window, QColor("#f5f5f5"))
+        palette.setColor(QPalette.ColorRole.WindowText, QColor("#202020"))
+        palette.setColor(QPalette.ColorRole.Base, QColor("#ffffff"))
+        palette.setColor(QPalette.ColorRole.AlternateBase, QColor("#eeeeee"))
+        palette.setColor(QPalette.ColorRole.Text, QColor("#202020"))
+        palette.setColor(QPalette.ColorRole.Button, QColor("#ffffff"))
+        palette.setColor(QPalette.ColorRole.ButtonText, QColor("#202020"))
+        palette.setColor(QPalette.ColorRole.Mid, QColor("#c5c5c5"))
+        palette.setColor(QPalette.ColorRole.Midlight, QColor("#e2e2e2"))
+        palette.setColor(QPalette.ColorRole.Dark, QColor("#aaaaaa"))
+        palette.setColor(QPalette.ColorRole.Highlight, QColor("#bf265e"))
+        palette.setColor(QPalette.ColorRole.HighlightedText, QColor("#ffffff"))
+        palette.setColor(
+            QPalette.ColorRole.PlaceholderText,
+            QColor("#707070"),
+        )
+
+        return palette
+    @staticmethod
+    def _dark_palette() -> QPalette:
+        palette = QPalette()
+
+        palette.setColor(QPalette.ColorRole.Window, QColor("#202124"))
+        palette.setColor(QPalette.ColorRole.WindowText, QColor("#f1f3f4"))
+        palette.setColor(QPalette.ColorRole.Base, QColor("#17181a"))
+        palette.setColor(QPalette.ColorRole.AlternateBase, QColor("#292a2d"))
+        palette.setColor(QPalette.ColorRole.Text, QColor("#f1f3f4"))
+        palette.setColor(QPalette.ColorRole.Button, QColor("#292a2d"))
+        palette.setColor(QPalette.ColorRole.ButtonText, QColor("#f1f3f4"))
+        palette.setColor(QPalette.ColorRole.Mid, QColor("#4a4c50"))
+        palette.setColor(QPalette.ColorRole.Midlight, QColor("#383a3e"))
+        palette.setColor(QPalette.ColorRole.Dark, QColor("#121315"))
+        palette.setColor(QPalette.ColorRole.Highlight, QColor("#bf265e"))
+        palette.setColor(QPalette.ColorRole.HighlightedText, QColor("#ffffff"))
+        palette.setColor(
+            QPalette.ColorRole.PlaceholderText,
+            QColor("#a0a4aa"),
+        )
+
+        return palette
