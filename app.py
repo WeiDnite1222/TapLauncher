@@ -1,3 +1,4 @@
+import platform
 import sys
 from pathlib import Path
 from typing import Callable
@@ -66,7 +67,7 @@ class Launcher(QApplication, LauncherObject):
         move_window_to_center(self.main_window)
 
         # Set icon
-        if self.icon_path.exists():
+        if self.icon_path.exists() and platform.system().lower() != "darwin":
             self.setWindowIcon(QIcon(self.icon_path.as_posix()))
         else:
             self.logger.error("No icon found.")

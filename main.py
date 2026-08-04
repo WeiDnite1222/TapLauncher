@@ -13,7 +13,7 @@
 #    nuitka-project: --windows-icon-from-ico={MAIN_DIRECTORY}/resources/icons/icon.png
 # nuitka-project-if: {OS} == "Darwin":
 #    nuitka-project: --macos-create-app-bundle
-#    nuitka-project: --macos-app-icon={MAIN_DIRECTORY}/resources/icons/apple-app-icon.icon
+#    nuitka-project: --macos-app-icon={MAIN_DIRECTORY}/resources/icons/apple-app-icon-default.png
 #    nuitka-project: --macos-app-name="TapLauncher"
 
 import os
