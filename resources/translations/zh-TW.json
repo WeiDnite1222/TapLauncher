@@ -271,5 +271,13 @@
   "Failed to fetch version manifest: {error}": "無法取得版本資訊：{error}",
   "An unexpected error occurred while fetching version manifest: {error}": "取得版本資訊時發生非預期錯誤：{error}",
   "Unable to launch profile {profile}: {error}": "無法啟動設定檔 {profile}：{error}",
-  "To make all page apply new language. Is recommend to restart the launcher after change it.": "為了讓所有頁面套用語言更新，建議在修改後重新啟動啟動器。"
+  "To make all page apply new language. Is recommend to restart the launcher after change it.": "為了讓所有頁面套用語言更新，建議在修改後重新啟動啟動器。",
+  "Save Log": "儲存紀錄",
+  "Select where to save the log file": "選擇紀錄檔的儲存位置",
+  "Text Files (*.txt);;All Files (*)": "文字檔案 (*.txt);;所有檔案 (*)",
+  "Log output is empty. No need to save it.": "紀錄內容為空，無需儲存。",
+  "Log Viewer": "紀錄檢視器",
+  "Log output saved to {file_name}": "紀錄已儲存至 {file_name}",
+  "Unable to save log file: {error}": "無法儲存紀錄檔：{error}",
+  "Log truncated at {time}; {count} older lines removed.": "紀錄已於 {time} 裁切；已移除較舊的 {count} 行。"
 }

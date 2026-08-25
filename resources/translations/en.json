@@ -271,5 +271,13 @@
   "Failed to fetch version manifest: {error}": "Failed to fetch version manifest: {error}",
   "An unexpected error occurred while fetching version manifest: {error}": "An unexpected error occurred while fetching version manifest: {error}",
   "Unable to launch profile {profile}: {error}": "Unable to launch profile {profile}: {error}",
-  "To make all page apply new language. Is recommend to restart the launcher after change it.": "To make all page apply new language. Is recommend to restart the launcher after change it."
+  "To make all page apply new language. Is recommend to restart the launcher after change it.": "To make all page apply new language. Is recommend to restart the launcher after change it.",
+  "Save Log": "Save Log",
+  "Select where to save the log file": "Select where to save the log file",
+  "Text Files (*.txt);;All Files (*)": "Text Files (*.txt);;All Files (*)",
+  "Log output is empty. No need to save it.": "Log output is empty. No need to save it.",
+  "Log Viewer": "Log Viewer",
+  "Log output saved to {file_name}": "Log output saved to {file_name}",
+  "Unable to save log file: {error}": "Unable to save log file: {error}",
+  "Log truncated at {time}; {count} older lines removed.": "Log truncated at {time}; {count} older lines removed."
 }

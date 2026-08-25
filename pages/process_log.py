@@ -2,6 +2,7 @@ import subprocess
 import threading
 from collections import deque
 from collections.abc import Callable
+from datetime import datetime
 
 from PySide6.QtCore import QObject, Signal
 from PySide6.QtGui import QCloseEvent
@@ -12,6 +13,8 @@ from PySide6.QtWidgets import (
     QPlainTextEdit,
     QPushButton,
     QVBoxLayout,
+    QFileDialog,
+    QSizePolicy,
     QWidget,
 )
 
@@ -19,7 +22,7 @@ from core_lib.qt import messagebox
 
 
 class _ProcessSignals(QObject):
-    output = Signal(str)
+    output = Signal(str, str)
     # Windows may return an unsigned 32-bit exit code (for example
     # 0xFFFFFFFF), which does not fit in Qt's signed Signal(int).
     finished = Signal(object)
@@ -31,6 +34,9 @@ class ProcessLogWindow(QMainWindow):
     A Simple client log view
     """
 
+    MAX_LOG_LINES = 100_000
+    LOG_TRIM_LINES = 10_000
+
     def __init__(self, app, process: subprocess.Popen, profile_id: str, title: str = "Game Log",
                  parent: QWidget | None = None, finished_callback: Callable[[str, int], None]=None) -> None:
         super().__init__(parent)
@@ -39,6 +45,8 @@ class ProcessLogWindow(QMainWindow):
         self.profile_id = profile_id
         self._signals = _ProcessSignals(self)
         self._last_error_message: str | None = None
+        self.lines: list[tuple[str, str]] = []  # type, message
+        self._trimmed_line_count = 0
         self._stderr_lines: deque[str] = deque(maxlen=500)
 
         self.setWindowTitle(self.app.tr_text(title))
@@ -48,23 +56,100 @@ class ProcessLogWindow(QMainWindow):
         layout = QVBoxLayout(container)
         controls = QHBoxLayout()
 
+        layout.setContentsMargins(0, 0, 0, 0)
+        controls.setContentsMargins(8, 8, 8, 0)
+
         self.status_label = QLabel(self.app.tr_text("Running (PID {pid})", pid=process.pid))
         self.kill_button = QPushButton(self.app.tr_text("Kill Process"))
+        self.save_log_button = QPushButton(self.app.tr_text("Save Log"))
         self.kill_button.clicked.connect(self.kill_process)
+        self.save_log_button.clicked.connect(self.save_log)
 
         self.log_output = QPlainTextEdit()
         self.log_output.setReadOnly(True)
         self.log_output.setLineWrapMode(QPlainTextEdit.LineWrapMode.NoWrap)
-        self.log_output.setMaximumBlockCount(10000)
+        self.log_output.setMaximumBlockCount(self.MAX_LOG_LINES)
+        self.log_output.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Expanding)
 
         controls.addWidget(self.status_label)
         controls.addStretch()
+        controls.addWidget(self.save_log_button)
         controls.addWidget(self.kill_button)
         layout.addLayout(controls)
         layout.addWidget(self.log_output)
         self.setCentralWidget(container)
 
-        self._signals.output.connect(self.log_output.appendPlainText)
+        self.setStyleSheet(
+            """
+            QMainWindow {
+                spacing: 0;
+            }
+            
+            QPlainTextEdit {
+                background-color: #0f0f10;
+                color: "#e5e5e5";
+                font-family: Consolas;
+                font-size: 10pt;
+            }
+            
+            QScrollBar:vertical {
+                background-color: #0f0f10;
+                width: 5px;
+                margin: 0;
+            }
+            
+            QScrollBar::handle:vertical {
+                background-color: #3a3a3a;
+                min-height: 24px;
+                border-radius: 5px;
+            }
+            
+            QScrollBar::handle:vertical:hover {
+                background-color: #4a4a4a;
+            }
+            
+            QScrollBar::add-line:vertical,
+            QScrollBar::sub-line:vertical {
+                height: 0;
+            }
+            
+            QScrollBar::add-page:vertical,
+            QScrollBar::sub-page:vertical {
+                background: none;
+            }
+            
+            
+            /* Horizontal scrollbar */
+            
+            QScrollBar:horizontal {
+                background-color: #0f0f10;
+                height: 5px;
+                margin: 0;
+            }
+            
+            QScrollBar::handle:horizontal {
+                background-color: #3a3a3a;
+                min-width: 24px;
+                border-radius: 5px;
+            }
+            
+            QScrollBar::handle:horizontal:hover {
+                background-color: #4a4a4a;
+            }
+            
+            QScrollBar::add-line:horizontal,
+            QScrollBar::sub-line:horizontal {
+                width: 0;
+            }
+            
+            QScrollBar::add-page:horizontal,
+            QScrollBar::sub-page:horizontal {
+                background: none;
+            }
+            """
+        )
+
+        self._signals.output.connect(self._append_output)
         self._signals.finished.connect(self._process_finished)
         self._signals.read_failed.connect(self._read_failed)
 
@@ -90,6 +175,35 @@ class ProcessLogWindow(QMainWindow):
         self._waiter.start()
 
     def append_message(self, message: str) -> None:
+        self._append_output("launcher", message)
+
+    def _append_output(self, line_type: str, message: str) -> None:
+        """Store and display one line, trimming old output in bounded chunks."""
+        if len(self.lines) >= self.MAX_LOG_LINES:
+            trim_count = min(self.LOG_TRIM_LINES, len(self.lines))
+
+            # Replace the previous truncation marker; it is not process output.
+            if self.lines and self.lines[0][0] == "truncated":
+                del self.lines[0]
+                trim_count = min(trim_count - 1, len(self.lines))
+
+            del self.lines[:trim_count]
+            self._trimmed_line_count += trim_count
+
+            trimmed_at = datetime.now().astimezone().isoformat(timespec="seconds")
+            marker = "[launcher] " + self.app.tr_text(
+                "Log truncated at {time}; {count} older lines removed.",
+                time=trimmed_at,
+                count=self._trimmed_line_count,
+            )
+            self.lines.insert(0, ("truncated", marker))
+
+            # Keep the widget and the saved-log buffer identical after trimming.
+            self.log_output.setPlainText(
+                "\n".join(stored_message for _, stored_message in self.lines)
+            )
+
+        self.lines.append((line_type, message))
         self.log_output.appendPlainText(message)
 
     @property
@@ -100,7 +214,7 @@ class ProcessLogWindow(QMainWindow):
         try:
             if self.process.stdout is not None:
                 for line in self.process.stdout:
-                    self._signals.output.emit(line.rstrip("\r\n"))
+                    self._signals.output.emit("normal", line.rstrip("\r\n"))
         except Exception as exc:
             self._signals.read_failed.emit(str(exc))
 
@@ -108,10 +222,11 @@ class ProcessLogWindow(QMainWindow):
         try:
             if self.process.stderr is not None:
                 for line in self.process.stderr:
-                    message = line.rstrip("\r\n").strip()
-                    if message:
-                        self._last_error_message = message
+                    message = line.rstrip("\r\n")
+                    if message.strip():
+                        self._last_error_message = message.strip()
                         self._stderr_lines.append(message)
+                    self._signals.output.emit("error", message)
         except Exception as exc:
             self._signals.read_failed.emit(str(exc))
 
@@ -144,6 +259,43 @@ class ProcessLogWindow(QMainWindow):
             self.kill_button.setEnabled(True)
             self.status_label.setText(self.app.tr_text("Unable to kill process"))
             self.append_message(f"[launcher] Unable to kill process: {exc}")
+
+    def save_log(self) -> None:
+        file_name, _ = QFileDialog.getSaveFileName(
+            None,
+            self.app.tr_text("Select where to save the log file"),
+            "game-output.txt",
+            self.app.tr_text("Text Files (*.txt);;All Files (*)"),
+        )
+
+        # cancel
+        if not file_name:
+            return
+
+        if not self.lines:
+            messagebox.warning(
+                self,
+                self.app.tr_text("Warning"),
+                self.app.tr_text("Log output is empty. No need to save it."),
+            )
+            return
+
+        try:
+            with open(file_name, "w", encoding="utf-8", newline="\n") as log_file:
+                for _, message in self.lines:
+                    log_file.write(message + "\n")
+
+            messagebox.info(
+                self,
+                self.app.tr_text("Log Viewer"),
+                self.app.tr_text("Log output saved to {file_name}", file_name=file_name),
+            )
+        except Exception as exc:
+            messagebox.error(
+                self,
+                self.app.tr_text("Error"),
+                self.app.tr_text("Unable to save log file: {error}", error=exc),
+            )
 
     def _process_finished(self, exit_code: int) -> None:
         self.kill_button.setEnabled(False)
