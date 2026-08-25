@@ -15,22 +15,21 @@
 ### Installation
 
 1. Clone the project :
-```
+```bash
 git clone https://repo.weispace.net/wei/Launcher.git TestLauncher
 cd TestLauncher
 ```
 
 2. Sync required packages :
-```
+```bash
 uv sync
 ```
 
 3. Run the launcher
-> Is recommended to use `--work-dir` argument to change working directory. (If you don't like launcher mess up the 
-> project folder)
-```aiignore
-mkdir launcherDir 
-uv run python main.py --work-dir
+> The launcher provide `--work-dir` argument to change working directory. (If not provided, launcher will use application directory)
+```bash
+uv run python main.py
+uv run python main.py --work-dir path_to_work_dir # With custom working directory
 ```
 
 ## Troubleshooting
