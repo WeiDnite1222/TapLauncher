@@ -1,7 +1,14 @@
 import platform
 import sys
+import traceback
+from collections.abc import Mapping
 from pathlib import Path
 from typing import Callable
+
+try:
+    import tomllib
+except ModuleNotFoundError:  # Python 3.10
+    import tomli as tomllib
 
 from PySide6.QtCore import QSize
 from PySide6.QtGui import QIcon, QPixmap, QPalette, QColor
@@ -21,13 +28,33 @@ from manager.settings_models import AccountSettings, AppearanceSettings, General
 from manager.widgets import WidgetManager
 from window import LauncherMainWindow
 
+
+PALETTE_ROLES = {
+    "window": QPalette.ColorRole.Window,
+    "window_text": QPalette.ColorRole.WindowText,
+    "base": QPalette.ColorRole.Base,
+    "alternate_base": QPalette.ColorRole.AlternateBase,
+    "text": QPalette.ColorRole.Text,
+    "button": QPalette.ColorRole.Button,
+    "button_text": QPalette.ColorRole.ButtonText,
+    "mid": QPalette.ColorRole.Mid,
+    "midlight": QPalette.ColorRole.Midlight,
+    "dark": QPalette.ColorRole.Dark,
+    "highlight": QPalette.ColorRole.Highlight,
+    "highlighted_text": QPalette.ColorRole.HighlightedText,
+    "placeholder_text": QPalette.ColorRole.PlaceholderText,
+}
+
+
 class Launcher(QApplication, LauncherObject):
-    def __init__(self, logger, debug: bool = False):
+    def __init__(self, logger, log_capture_handler, debug: bool = False):
         super().__init__()
         self._system_palette = QPalette(self.palette()) # theme
 
         # logger
         self.logger = logger
+        self.log_capture_handler = log_capture_handler
+
         self.debug = debug
 
         # dirs
@@ -42,7 +69,7 @@ class Launcher(QApplication, LauncherObject):
         self.settings_manager.register("appearance", AppearanceSettings)
         self.settings_manager.register("account", AccountSettings)
         if self.root_settings_dir.is_file():
-            self.settings_manager.load()
+            self.load_settings()
         else:
             self.settings_manager.load_defaults().save()
 
@@ -214,6 +241,14 @@ class Launcher(QApplication, LauncherObject):
     def styles_path(self):
         return self.resources_dir / "styles"
 
+    @property
+    def built_in_themes_dir(self) -> Path:
+        return self.resources_dir / "themes"
+
+    @property
+    def user_themes_dir(self) -> Path:
+        return self.data_dir / "themes"
+
     def apply_qss(self, qss_relative_path: Path, apply_qss_callback: Callable[[str], None]) -> str:
         full_path = self.styles_path / qss_relative_path
         if not full_path.exists():
@@ -243,20 +278,49 @@ class Launcher(QApplication, LauncherObject):
     def get_main_window(self):
         return self.main_window
 
-    def apply_theme(self, theme=None):
+    def available_themes(self) -> dict[str, str]:
+        """Return valid theme IDs and their display names."""
+        themes = {"system": "Follow system settings"}
+        for theme_id, directory in self._theme_packages().items():
+            try:
+                name = self._read_theme_manifest(directory / "theme.toml")
+                colors = self._read_palette(directory / "palette.toml")
+                self._palette_from_colors(colors)
+            except (OSError, ValueError, tomllib.TOMLDecodeError) as error:
+                self.logger.warning("Ignoring invalid theme %s: %s", directory, error)
+                continue
+            themes[theme_id] = name
+        return themes
+
+    def apply_theme(self, theme: str | None = None) -> None:
         if not theme:
             appearance = self.settings_manager.get("appearance", AppearanceSettings)
-
             theme = appearance.theme
 
         if theme == "system":
-            palette = self._system_palette
-        elif theme == "dark":
-            palette = self._dark_palette()
-        elif theme == "light":
-            palette = self._light_palette()
+            # Apply system palette
+            palette = QPalette(self._system_palette)
         else:
-            raise ValueError(f"Unsupported theme: {theme}")
+            # Use custom theme pack palette
+            directory = self._theme_packages().get(theme)
+            if directory is None:
+                self.logger.warning(
+                    "Theme %r was not found; using the system theme instead.",
+                    theme,
+                )
+                palette = QPalette(self._system_palette)
+            else:
+                try:
+                    self._read_theme_manifest(directory / "theme.toml")
+                    colors = self._read_palette(directory / "palette.toml")
+                    palette = self._palette_from_colors(colors)
+                except (OSError, ValueError, tomllib.TOMLDecodeError) as error:
+                    self.logger.warning(
+                        "Unable to apply theme %s; using the system theme: %s",
+                        directory,
+                        error,
+                    )
+                    palette = QPalette(self._system_palette)
 
         self.setPalette(palette)
 
@@ -269,47 +333,74 @@ class Launcher(QApplication, LauncherObject):
             self.reload_toolbutton_icons()
             self.main_window.toolbar.update_all()
 
+    def _theme_packages(self) -> dict[str, Path]:
+        """Discover theme package directories.
+
+        User theme packages override built-in packages with the same directory
+        name. A valid package contains both ``theme.toml`` and ``palette.toml``.
+        """
+        self.user_themes_dir.mkdir(parents=True, exist_ok=True)
+        themes: dict[str, Path] = {}
+
+        for directory in (self.built_in_themes_dir, self.user_themes_dir):
+            if not directory.is_dir():
+                continue
+
+            for theme_dir in sorted(directory.iterdir()):
+                if not theme_dir.is_dir() or theme_dir.name == "system":
+                    continue
+
+                themes[theme_dir.name] = theme_dir
+
+        return themes
+
     @staticmethod
-    def _light_palette() -> QPalette:
-        palette = QPalette()
+    def _read_theme_manifest(path: Path) -> str:
+        with path.open("rb") as theme_file:
+            data = tomllib.load(theme_file)
 
-        palette.setColor(QPalette.ColorRole.Window, QColor("#f5f5f5"))
-        palette.setColor(QPalette.ColorRole.WindowText, QColor("#202020"))
-        palette.setColor(QPalette.ColorRole.Base, QColor("#ffffff"))
-        palette.setColor(QPalette.ColorRole.AlternateBase, QColor("#eeeeee"))
-        palette.setColor(QPalette.ColorRole.Text, QColor("#202020"))
-        palette.setColor(QPalette.ColorRole.Button, QColor("#ffffff"))
-        palette.setColor(QPalette.ColorRole.ButtonText, QColor("#202020"))
-        palette.setColor(QPalette.ColorRole.Mid, QColor("#c5c5c5"))
-        palette.setColor(QPalette.ColorRole.Midlight, QColor("#e2e2e2"))
-        palette.setColor(QPalette.ColorRole.Dark, QColor("#aaaaaa"))
-        palette.setColor(QPalette.ColorRole.Highlight, QColor("#bf265e"))
-        palette.setColor(QPalette.ColorRole.HighlightedText, QColor("#ffffff"))
-        palette.setColor(
-            QPalette.ColorRole.PlaceholderText,
-            QColor("#707070"),
-        )
+        name = data.get("name", path.parent.name)
+        if not isinstance(name, str) or not name.strip():
+            raise ValueError("theme name must be a non-empty string")
+        return name.strip()
 
-        return palette
     @staticmethod
-    def _dark_palette() -> QPalette:
+    def _read_palette(path: Path) -> Mapping[str, str]:
+        with path.open("rb") as palette_file:
+            data = tomllib.load(palette_file)
+
+        colors = data.get("palette")
+        if not isinstance(colors, dict):
+            raise ValueError("palette must contain a [palette] table")
+
+        missing = PALETTE_ROLES.keys() - colors.keys()
+        if missing:
+            raise ValueError(
+                "palette file is missing palette colors: " + ", ".join(sorted(missing))
+            )
+        return colors
+
+    @staticmethod
+    def _palette_from_colors(colors: Mapping[str, str]) -> QPalette:
         palette = QPalette()
-
-        palette.setColor(QPalette.ColorRole.Window, QColor("#202124"))
-        palette.setColor(QPalette.ColorRole.WindowText, QColor("#f1f3f4"))
-        palette.setColor(QPalette.ColorRole.Base, QColor("#17181a"))
-        palette.setColor(QPalette.ColorRole.AlternateBase, QColor("#292a2d"))
-        palette.setColor(QPalette.ColorRole.Text, QColor("#f1f3f4"))
-        palette.setColor(QPalette.ColorRole.Button, QColor("#292a2d"))
-        palette.setColor(QPalette.ColorRole.ButtonText, QColor("#f1f3f4"))
-        palette.setColor(QPalette.ColorRole.Mid, QColor("#4a4c50"))
-        palette.setColor(QPalette.ColorRole.Midlight, QColor("#383a3e"))
-        palette.setColor(QPalette.ColorRole.Dark, QColor("#121315"))
-        palette.setColor(QPalette.ColorRole.Highlight, QColor("#bf265e"))
-        palette.setColor(QPalette.ColorRole.HighlightedText, QColor("#ffffff"))
-        palette.setColor(
-            QPalette.ColorRole.PlaceholderText,
-            QColor("#a0a4aa"),
-        )
-
+        for name, role in PALETTE_ROLES.items():
+            value = colors[name]
+            if not isinstance(value, str):
+                raise ValueError(f"palette color {name!r} must be a string")
+            color = QColor(value)
+            if not color.isValid():
+                raise ValueError(f"invalid palette color {name!r}: {value!r}")
+            palette.setColor(role, color)
         return palette
+
+    def load_settings(self):
+        if hasattr(self, "settings_manager"):
+            try:
+                self.settings_manager.load()
+            except Exception as e:
+                messagebox.error_with_plain_text(
+                    None,
+                    "Settings Error",
+                    "An unexpected error occurred while loading settings.",
+                    f"Below are the raw data of the error\n\nError: {str(e)}\n\nTraceback:\n{traceback.format_exc()}",
+                )

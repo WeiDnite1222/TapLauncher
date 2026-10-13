@@ -19,12 +19,15 @@ QPushButton#manageProfileItem {
 }
 
 QLabel#itemVersion {
-    color: #aeb6c2;
+    color: palette(placeholder-text);
     font-size: 12px;
 }
 
 QPushButton#manageProfileItem:hover { background: palette(midlight); }
-QPushButton#manageProfileItem:checked { background: #3d6fb4; }
+QPushButton#manageProfileItem:checked {
+    background: palette(highlight);
+    color: palette(highlighted-text);
+}
 
 QLabel#itemName { font-size: 15px; font-weight: 600; }
 

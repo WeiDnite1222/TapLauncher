@@ -332,6 +332,9 @@ class LaunchProfilePage(QWidget):
             )
             self.status_label_cleanup()
             return
+        else:
+            if callable(result.success_callback):
+                result.success_callback()
 
         # Create log view
         log_window = ProcessLogWindow(

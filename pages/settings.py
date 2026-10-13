@@ -1,3 +1,4 @@
+import uuid
 from pathlib import Path
 
 from PySide6.QtCore import Qt
@@ -11,21 +12,19 @@ from PySide6.QtWidgets import (
     QPushButton,
     QStackedWidget,
     QVBoxLayout,
-    QWidget, QScrollArea,
+    QWidget, QScrollArea, QSizePolicy, QSpinBox,
 )
 
 from constant import LAUNCHER_DESCRIPTION, LAUNCHER_NAME, LAUNCHER_VERSION
 from manager.settings_models import AccountSettings, AppearanceSettings, GeneralSettings
 
-
 LANGUAGE_LABELS = {
     "en": "English",
     "zh-TW": "Chinese (Traditional)",
 }
-THEME_LABELS = {
-    "system": "Follow system settings",
-    "light": "Light",
-    "dark": "Dark",
+CREDENTIALS_SAVE_METHODS = {
+    "system-keyring": "Use system keyring",
+    "file": "Save as a regular file",
 }
 
 
@@ -54,7 +53,7 @@ class SettingsItem(QPushButton):
 
 
 class SettingsSubPage(QWidget):
-    def __init__(self, title: str, back_callback) -> None:
+    def __init__(self, title: str, back_callback, /, expand_content: bool = False) -> None:
         super().__init__()
         self.setObjectName("settingsSubPage")
 
@@ -78,7 +77,12 @@ class SettingsSubPage(QWidget):
         self.content_layout = QVBoxLayout()
         self.content_layout.setSpacing(12)
         main_layout.addLayout(header_layout)
-        main_layout.addLayout(self.content_layout)
+        self.content_layout.setContentsMargins(0, 0, 0, 0)
+        self.content_layout.setSpacing(6)
+        if expand_content:
+            main_layout.addLayout(self.content_layout, 1)
+        else:
+            main_layout.addLayout(self.content_layout)
         main_layout.addStretch()
 
 
@@ -87,6 +91,7 @@ class SettingsPage(QWidget):
         super().__init__(parent)
         self.app = app
         self.settings = app.settings_manager
+        self.account_mgr = app.account_manager
         self._settings_dirty = False
         self.setObjectName("settingsPage")
 
@@ -99,12 +104,14 @@ class SettingsPage(QWidget):
         self.appearance_page = self._create_appearance_page()
         self.account_page = self._create_account_page()
         self.about_page = self._create_about_page()
+        self.log_page = self._create_log_page()
         for page in (
-            self.main_page,
-            self.general_page,
-            self.appearance_page,
-            self.account_page,
-            self.about_page,
+                self.main_page,
+                self.general_page,
+                self.appearance_page,
+                self.account_page,
+                self.about_page,
+                self.log_page,
         ):
             self.stack.addWidget(page)
 
@@ -115,6 +122,10 @@ class SettingsPage(QWidget):
 
         self.theme_combo.currentIndexChanged.connect(
             self._apply_selected_theme
+        )
+
+        self.credentials_save_method.currentIndexChanged.connect(
+            self._mark_settings_dirty
         )
         self.app.i18n.language_changed.connect(self.retranslate_ui)
 
@@ -137,11 +148,11 @@ class SettingsPage(QWidget):
         self.account_page = self._create_account_page()
         self.about_page = self._create_about_page()
         for page in (
-            self.main_page,
-            self.general_page,
-            self.appearance_page,
-            self.account_page,
-            self.about_page,
+                self.main_page,
+                self.general_page,
+                self.appearance_page,
+                self.account_page,
+                self.about_page,
         ):
             self.stack.addWidget(page)
         self.stack.setCurrentIndex(min(current_page, self.stack.count() - 1))
@@ -178,6 +189,7 @@ class SettingsPage(QWidget):
             (tr("Appearance"), tr("Launcher theme"), "appearance_page"),
             (tr("Account"), tr("Microsoft authentication settings"), "account_page"),
             (tr("About"), tr("Version and project information"), "about_page"),
+            (tr("Logger"), tr("Launcher log"), "log_page"),
         )
         for title_text, description, page_name in pages:
             button = SettingsItem(title_text, description)
@@ -221,10 +233,21 @@ class SettingsPage(QWidget):
         current = self.settings.get("appearance", AppearanceSettings)
 
         page.content_layout.addWidget(QLabel(tr("Theme")))
-        self.theme_combo = self._choice_combo(
-            "appearance", "theme", THEME_LABELS, current.theme
-        )
+        self.theme_combo = QComboBox()
+        for theme_id, name in self.app.available_themes().items():
+            self.theme_combo.addItem(tr(name), theme_id)
+
+        index = self.theme_combo.findData(current.theme)
+        self.theme_combo.setCurrentIndex(max(index, 0))
         page.content_layout.addWidget(self.theme_combo)
+
+        help_label = QLabel(tr(
+            "Add theme folders containing theme.toml and palette.toml to: {path}",
+            path=self.app.user_themes_dir,
+        ))
+        help_label.setObjectName("settingsHelpText")
+        help_label.setWordWrap(True)
+        page.content_layout.addWidget(help_label)
         return page
 
     def _create_account_page(self) -> QWidget:
@@ -232,8 +255,22 @@ class SettingsPage(QWidget):
         page = SettingsSubPage(tr("Account"), self._go_back)
         current = self.settings.get("account", AccountSettings)
 
+        page.content_layout.addWidget(QLabel(tr("Credentials save method")))
+        self.credentials_save_method = self._choice_combo(
+            "account", "credentials_save_method", CREDENTIALS_SAVE_METHODS,
+            current.credentials_save_method,
+        )
+        page.content_layout.addWidget(self.credentials_save_method)
+
         page.content_layout.addWidget(QLabel(tr("Microsoft OAuth Client ID")))
-        self.client_id_edit = QLineEdit(str(current.client_id))
+        custom_client_id_raw = self.account_mgr.settings_custom_client_id
+
+        if not custom_client_id_raw:
+            custom_client_id = ""
+        else:
+            custom_client_id = custom_client_id_raw
+
+        self.client_id_edit = QLineEdit(str(custom_client_id))
         self.client_id_edit.setPlaceholderText(
             "xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx"
         )
@@ -245,12 +282,28 @@ class SettingsPage(QWidget):
         ))
         help_label.setObjectName("settingsHelpText")
         help_label.setWordWrap(True)
+
+        page.content_layout.addWidget(
+            QLabel(tr("Token refresh check interval"))
+        )
+
+        self.token_refresh_interval = QSpinBox()
+        self.token_refresh_interval.setRange(1, 1440) # minutes
+        self.token_refresh_interval.setSingleStep(1)
+        self.token_refresh_interval.setSuffix(
+            " " + tr("minutes")
+        )
+        self.token_refresh_interval.setValue(current.token_refresh_interval // 60)
+
+        self.token_refresh_interval.valueChanged.connect(self._mark_settings_dirty)
+
+        page.content_layout.addWidget(self.token_refresh_interval)
         page.content_layout.addWidget(help_label)
         return page
 
     def _create_about_page(self) -> QWidget:
         tr = self.app.tr_text
-        page = SettingsSubPage(tr("About"), self._go_back)
+        page = SettingsSubPage(tr("About"), self._go_back, expand_content=True)
         brand_label = QLabel(LAUNCHER_NAME)
         brand_label.setObjectName("settingsBrand")
         version_label = QLabel(tr("Version: {version}", version=LAUNCHER_VERSION))
@@ -264,12 +317,26 @@ class SettingsPage(QWidget):
         page.content_layout.addWidget(description)
         return page
 
+    def _create_log_page(self) -> QWidget:
+        tr = self.app.tr_text
+        page = SettingsSubPage(tr("Log View"), self._go_back, expand_content=True)
+        messages = "\n".join(self.app.log_capture_handler.get_messages())
+        log_text = QPlainTextEdit(messages)
+        log_text.setObjectName("settingsLogText")
+        log_text.setReadOnly(True)
+        self.app.log_capture_handler.emitter.message_emitted.connect(
+            log_text.appendPlainText
+        )
+        log_text.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Expanding)
+        page.content_layout.addWidget(log_text, 1)
+        return page
+
     def _choice_combo(
-        self,
-        section: str,
-        field: str,
-        labels: dict[str, str],
-        current: str,
+            self,
+            section: str,
+            field: str,
+            labels: dict[str, str],
+            current: str,
     ) -> QComboBox:
         combo = QComboBox()
         for value in self.settings.choices(section, field):
@@ -288,16 +355,102 @@ class SettingsPage(QWidget):
         if not self._settings_dirty:
             return True
 
+        previous_credentials_method = (
+            self.settings
+            .get("account", AccountSettings)
+            .credentials_save_method # sec
+        )
+
+        previous_token_refresh_interval = (
+            self.settings.get("account", AccountSettings)
+            .token_refresh_interval
+        )
+
+        current_token_refresh_interval = (
+                self.token_refresh_interval.value() * 60 # minutes to seconds
+        )
+
+        selected_credentials_method = (
+            self.credentials_save_method.currentData()
+        )
+
+        credentials_method_changed = (
+                previous_credentials_method
+                != selected_credentials_method
+        )
+
+        token_refresh_interval_changed = (
+            previous_token_refresh_interval
+            != current_token_refresh_interval
+        )
+
+        client_id = self.client_id_edit.text().strip()
+
+        try:
+            client_id = uuid.UUID(client_id) if client_id else None
+        except ValueError:
+            if show_error:
+                QMessageBox.warning(
+                    self,
+                    self.app.tr_text("Invalid Client ID"),
+                    self.app.tr_text(
+                        "Client ID must be a valid UUID.\n\n"
+                        "Example: 12345678-1234-5678-9abc-123456789abc"
+                    ),
+                )
+
+            self.client_id_edit.setFocus()
+            self.client_id_edit.selectAll()
+            return False
+
         data = {
             "general": {"language": self.language_combo.currentData()},
             "appearance": {"theme": self.theme_combo.currentData()},
-            "account": {"client_id": self.client_id_edit.text().strip()},
+            "account": {"custom_client_id": client_id if client_id else None,
+                        "credentials_save_method": selected_credentials_method,
+                        "token_refresh_interval":
+                            current_token_refresh_interval
+                        },
         }
         try:
             self.settings.validate(data)
             for section, value in data.items():
                 self.settings.set(section, value)
             self.settings.save()
+
+            # Handle credentials data migration
+            if credentials_method_changed:
+                success, _ = self.account_mgr.reload()
+
+                if not success:
+                    # Rollback to previous credentials method if migration failed
+                    rollback_account = dict(data["account"])
+                    rollback_account["credentials_save_method"] = (
+                        previous_credentials_method
+                    )
+
+                    self.settings.set("account", rollback_account)
+                    self.settings.save()
+
+                    index = self.credentials_save_method.findData(
+                        previous_credentials_method
+                    )
+                    self.credentials_save_method.setCurrentIndex(index)
+
+                    if show_error:
+                        QMessageBox.critical(
+                            self,
+                            self.app.tr_text("Credential migration failed"),
+                            self.app.tr_text(
+                                "The credential storage method was restored "
+                                "to its previous value."
+                            ),
+                        )
+                    return False
+
+            # Handle token refresh interval update
+            if token_refresh_interval_changed:
+                self.account_mgr.set_token_refresh_interval(current_token_refresh_interval)
         except Exception as error:
             if show_error:
                 QMessageBox.critical(self, self.app.tr_text("Settings error"), str(error))

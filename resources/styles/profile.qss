@@ -9,13 +9,13 @@ QFrame#profileButton:hover {
 }
 
 QLabel#profileName, QLabel#itemName {
-    color: #f4f6f8;
+    color: palette(text);
     font-size: 16px;
     font-weight: 600;
 }
 
 QLabel#profileVersion, QLabel#itemVersion {
-    color: #aeb6c2;
+    color: palette(placeholder-text);
     font-size: 12px;
 }
 
@@ -36,7 +36,8 @@ QPushButton#profileItem {
 }
 
 QPushButton#profileItem:hover {
-    background: #3d6fb4;
+    background: palette(highlight);
+    color: palette(highlighted-text);
 }
 
 QPushButton#launchButton {

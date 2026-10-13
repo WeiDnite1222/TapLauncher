@@ -525,7 +525,8 @@ class CreateProfilePage(QWidget):
             version_type=version_type,
         )
 
-        # Switch to current profile and save
+        # Create and optionally switch to the new profile. ProfileManager
+        # persists each successful mutation.
         profile_id = self.app.profile_manager.create_profile(request)
         if profile_id is None:
             return
@@ -533,9 +534,6 @@ class CreateProfilePage(QWidget):
         if switch_to_current:
             if not self.app.profile_manager.set_current_profile(profile_id):
                 return
-
-        if not self.app.profile_manager.save():
-            return
 
         self.widget_mgr.signal.show_info_message.emit(
             self.app.tr_text("Profile {profile_id} successfully created.", profile_id=profile_id),
@@ -622,9 +620,6 @@ class CreateProfilePage(QWidget):
         if switch_to_current:
             if not self.app.profile_manager.set_current_profile(profile_id):
                 return
-
-        if not self.app.profile_manager.save():
-            return
 
         self.widget_mgr.signal.show_info_message.emit(
             self.app.tr_text(

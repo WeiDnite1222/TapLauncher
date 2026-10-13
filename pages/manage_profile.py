@@ -403,7 +403,6 @@ class ManageProfilePage(QWidget):
         if self.profile_manager.validate_update(request).is_valid and self.profile_manager.update_profile(
             self.selected_profile_id, request
         ):
-            self.profile_manager.save()
             self.app.widget_manager.signal.show_info_message.emit(
                 self.app.tr_text("Profile settings saved.")
             )
@@ -478,7 +477,6 @@ class ManageProfilePage(QWidget):
         if new_id:
             self.selected_profile_id = new_id
             self.load_profiles()
-            self.profile_manager.save()
 
     def delete_profile(self, profile: ProfileSummary | None=None) -> None:
         if self.selected_profile_id is None and profile is None:
@@ -496,4 +494,3 @@ class ManageProfilePage(QWidget):
         if answer == QMessageBox.StandardButton.Yes:
             if self.profile_manager.remove_profile(profile_id):
                 self.selected_profile_id = None
-                self.profile_manager.save()

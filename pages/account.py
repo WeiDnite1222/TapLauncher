@@ -14,21 +14,23 @@ from PySide6.QtWidgets import (
     QMessageBox,
     QPushButton,
     QVBoxLayout,
-    QWidget, QDialog, QLineEdit, QApplication, QToolButton,
+    QWidget, QDialog, QLineEdit, QApplication, QToolButton, QProgressBar,
 )
 
-from constant import MICROSOFT_VERIFY_ENDPOINT
+from constant import MICROSOFT_VERIFY_ENDPOINT, CLIENT_ID
 
 from core_lib.qt.hack import move_window_to_center
-from manager.account import AccountManager, AccountSummary
+from manager.account import AccountManager, AccountSummary, AccountLoginStatus
 from manager.settings_models import AccountSettings
 
 
 class AccountWidget(QWidget):
-    def __init__(self, app, account_name: str, account_head: QPixmap, login_status: str,  parent=None,
-        /, delete_account_callback=None, check_account_callback=None, switch_account_callback=None,):
+    def __init__(self, app, account_id: str, account_name: str, account_head: QPixmap, login_status: str,  parent=None,
+        /, delete_account_callback=None, check_account_callback=None, refresh_token_callback=None,
+        switch_account_callback=None,):
         super().__init__(parent)
         self.app = app
+        self.account_id = account_id
 
         # Layout
         self.layout = QHBoxLayout(self)
@@ -51,6 +53,7 @@ class AccountWidget(QWidget):
         # Callback
         self.delete_account_callback = delete_account_callback
         self.check_account_callback = check_account_callback
+        self.refresh_token_callback = refresh_token_callback
         self.switch_account_callback = switch_account_callback
 
         self.setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu)
@@ -60,6 +63,7 @@ class AccountWidget(QWidget):
         menu = QMenu(self)
         switch_action = menu.addAction(self.app.tr_text("Switch to this account"))
         check_action = menu.addAction(self.app.tr_text("Check login status"))
+        refresh_action = menu.addAction(self.app.tr_text("Refresh token"))
         menu.addSeparator()
         delete_action = menu.addAction(self.app.tr_text("Delete account"))
         selected = menu.exec(self.mapToGlobal(position))
@@ -68,6 +72,8 @@ class AccountWidget(QWidget):
             self.delete_account_callback()
         elif selected == check_action and callable(self.check_account_callback):
             self.check_account_callback()
+        elif selected == refresh_action and callable(self.refresh_token_callback):
+            self.refresh_token_callback()
         elif selected == switch_action and callable(self.switch_account_callback):
             self.switch_account_callback()
 
@@ -106,6 +112,13 @@ class LoginDialog(QDialog):
         self.error_label.setWordWrap(True)
         self.error_label.setTextInteractionFlags(Qt.TextInteractionFlag.TextSelectableByMouse)
 
+        # Progress label
+        self.progress_label = QLabel(
+            self.app.tr_text("Preparing Microsoft sign-in…")
+        )
+        self.progress_label.setObjectName("progressText")
+        self.progress_label.setWordWrap(True)
+
         # Button
         self.copy_code_button = QPushButton(self.app.tr_text("Copy code"))
         self.copy_code_button.setObjectName("copyCodeButton")
@@ -114,6 +127,7 @@ class LoginDialog(QDialog):
 
         self.center_layout = QVBoxLayout()
         self.center_layout.setSpacing(10)
+        self.center_layout.addWidget(self.progress_label)
         self.center_layout.addWidget(self.code_edit)
         self.center_layout.addWidget(self.error_label)
 
@@ -140,6 +154,9 @@ class LoginDialog(QDialog):
 
     def set_code(self, code):
         self.code_edit.setText(str(code or ""))
+
+    def set_progress(self, value, message, busy=False):
+        self.progress_label.setText(f"{message} {f"{f"({value}%)" if not busy else ""}"}")
 
     def copy_code(self):
         QApplication.clipboard().setText(self.code)
@@ -176,17 +193,20 @@ class AccountPage(QWidget):
         self.account_list = QListWidget(self)
         self.add_account_button = QPushButton(self.app.tr_text("Add Account"))
         self.refresh_button = QPushButton(self.app.tr_text("Refresh all"))
+        self.reload_button = QPushButton(self.app.tr_text("Reload accounts"))
         self.delete_all_button = QPushButton(self.app.tr_text("Delete All"))
 
         # Button click handle
         self.add_account_button.clicked.connect(self.start_login_page)
         self.refresh_button.clicked.connect(self.refresh_accounts)
+        self.reload_button.clicked.connect(self.reload_accounts)
         self.delete_all_button.clicked.connect(self.account_manager.delete_all_accounts)
 
         # Bind widget
         main_layout.addWidget(self.account_list)
         right_layout.addWidget(self.add_account_button)
         right_layout.addWidget(self.refresh_button)
+        right_layout.addWidget(self.reload_button)
         right_layout.addWidget(self.delete_all_button)
         right_layout.addStretch()
 
@@ -201,16 +221,37 @@ class AccountPage(QWidget):
         self.account_manager.login_signal.login_succeeded.connect(self._login_succeeded)
         self.account_manager.login_signal.login_failed.connect(self._login_failed)
         self.account_manager.login_signal.finished.connect(self._login_finished)
+        self.account_manager.login_signal.progress_changed.connect(self._login_progress_changed)
         self.account_manager.head_signal.updated.connect(self._account_head_updated)
+        self.account_manager.login_status_checked.connect(self._login_status_checked)
+        self.account_manager.login_status_check_started.connect(self._log_status_check_started)
+        self.account_manager.token_refresh_started.connect(self._token_refresh_started)
+        self.account_manager.token_refreshed.connect(self._token_refreshed)
+        self.account_manager.token_refresh_failed.connect(self._token_refresh_failed)
+        self.account_manager.token_refresh_queue_finished.connect(self._token_refresh_queue_finished)
         self._render_accounts()
 
     def set_related_button(self, button: QToolButton):
         self.related_button = button
         self._update_related_button(None)
 
+    def _login_progress_changed(self, value: int, message: str, busy: bool):
+        if self.login_dialog is not None:
+            self.login_dialog.set_progress(value, message, busy)
+
+    def _find_account_widget(self, account_id: str):
+        for row in range(self.account_list.count()):
+            item = self.account_list.item(row)
+            widget = self.account_list.itemWidget(item)
+
+            if isinstance(widget, AccountWidget) and widget.account_id == account_id:
+                return widget
+
+        return None
+
     def _update_related_button(self, account_id: str | None):
         """
-        Update related button's icon to current (active) account avatar
+        Update the related button's icon to the current (active) account avatar
         :param account_id:
         :return:
         """
@@ -260,12 +301,14 @@ class AccountPage(QWidget):
         head_size = QSize(32, 32)
         widget = AccountWidget(
             self.app,
+            account.id,
             account.display_name,
             self.account_manager.get_head_pixmap(account.avatar, head_size),
             self.app.tr_text("Current" if is_current else "Available"),
             self,
             delete_account_callback=lambda: self._delete_account(account.id),
-            check_account_callback=lambda: self._show_account_status(account.id),
+            check_account_callback=lambda: self.account_manager.check_login_status_requested.emit(account.id),
+            refresh_token_callback=lambda: self.account_manager.refresh_account_token(account.id),
             switch_account_callback=lambda: self._switch_account(account.id),
         )
 
@@ -304,24 +347,6 @@ class AccountPage(QWidget):
         if self.account_manager.remove_account(account_id):
             self.account_manager.save()
 
-    def _show_account_status(self, account_id: str):
-        account = self.account_manager.get_account(account_id)
-
-        if account is None:
-            return
-
-        QMessageBox.information(
-            self,
-            self.app.tr_text("Account status"),
-            self.app.tr_text(
-                "{account} — Minecraft profile {status}",
-                account=account.display_name,
-                status=self.app.tr_text(
-                    "available" if account.minecraft_uuid else "not available"
-                ),
-            ),
-        )
-
     def _switch_account(self, account_id: str):
         self.account_manager.set_current_account(account_id)
         self.account_manager.save()
@@ -330,7 +355,29 @@ class AccountPage(QWidget):
         self._render_accounts()
 
     def refresh_accounts(self):
+        self.account_manager.refresh_all_tokens()
+
+    def reload_accounts(self):
         self.account_manager.reload()
+
+    def _token_refresh_started(self, account_id: str):
+        self.refresh_button.setEnabled(False)
+        widget = self._find_account_widget(account_id)
+        if widget is not None:
+            widget.status_label.setText(self.app.tr_text("Refreshing…"))
+
+    def _token_refreshed(self, account_id: str):
+        widget = self._find_account_widget(account_id)
+        if widget is not None:
+            widget.status_label.setText(self.app.tr_text("Signed in"))
+
+    def _token_refresh_failed(self, account_id: str, _message: str):
+        widget = self._find_account_widget(account_id)
+        if widget is not None:
+            widget.status_label.setText(self.app.tr_text("Refresh failed"))
+
+    def _token_refresh_queue_finished(self):
+        self.refresh_button.setEnabled(True)
 
     # Microsoft sign-in
     def start_login_page(self):
@@ -349,9 +396,7 @@ class AccountPage(QWidget):
         self.login_dialog.open_browser_button.clicked.connect(self.open_sign_in_page)
         self.login_dialog.rejected.connect(self.account_manager.cancel_login)
         self.login_dialog.show()
-
-        account_settings = self.app.settings_manager.get("account", AccountSettings)
-        self.account_manager.start_login(str(account_settings.client_id))
+        self.account_manager.start_login()
 
     def _show_device_code(self, device: dict):
         self._verification_uri = device.get("verification_uri", MICROSOFT_VERIFY_ENDPOINT)
@@ -393,3 +438,57 @@ class AccountPage(QWidget):
 
     def _login_finished(self):
         self.add_account_button.setEnabled(True)
+
+    def _log_status_check_started(self, account_id: str):
+        widget = self._find_account_widget(account_id)
+
+        if widget is not None:
+            widget.status_label.setText(
+                self.app.tr_text("Checking…")
+            )
+
+    def _login_status_checked(self, account_id: str, status: AccountLoginStatus):
+        account = self.account_manager.get_account(
+            account_id
+        )
+
+        if account is None:
+            return
+
+        widget = self._find_account_widget(account_id)
+
+        if widget is not None:
+            if not status.success:
+                widget.status_label.setText(
+                    self.app.tr_text("Check failed")
+                )
+            elif status.access_token_is_valid:
+                widget.status_label.setText(
+                    self.app.tr_text("Signed in")
+                )
+            else:
+                widget.status_label.setText(
+                    self.app.tr_text("Expired")
+                )
+
+        if not status.success:
+            message = self.app.tr_text(
+                "Unable to check login status: {error}",
+                error=status.error or "Unknown error",
+            )
+        elif status.access_token_is_valid:
+            message = self.app.tr_text(
+                "{account} is currently signed in.",
+                account=account.display_name,
+            )
+        else:
+            message = self.app.tr_text(
+                "{account}'s session has expired.",
+                account=account.display_name,
+            )
+
+        QMessageBox.information(
+            self,
+            self.app.tr_text("Account status"),
+            message,
+        )

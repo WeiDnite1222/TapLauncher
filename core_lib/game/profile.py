@@ -490,3 +490,26 @@ def update_profile(profiles: dict, profile_id: str, profile_data: dict, fix_wron
 
     return profiles, profile_id
 
+def set_last_used_time(profiles: dict, profile_id: str, time: datetime.datetime):
+    """
+    Set profile last used time.
+    :param profiles: Profiles data
+    :param profile_id: Target profile ID.
+    :param time: The time to set
+    :return:
+    """
+    if not is_profile_exists(profiles, profile_id):
+        raise ProfileException(
+            "Specified profile id {} not found.".format(profile_id)
+        )
+
+    profiles["profiles"][profile_id]["lastUsed"] = time.isoformat().replace("+00:00", "Z")
+
+def set_last_used_time_to_current(profiles: dict, profile_id: str):
+    """
+    Set profile last used time to the current time.
+    :param profiles: Profiles data
+    :param profile_id: Target profile ID.
+    :return:
+    """
+    set_last_used_time(profiles, profile_id, datetime.datetime.now(datetime.timezone.utc))

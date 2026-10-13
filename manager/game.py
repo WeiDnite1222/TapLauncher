@@ -28,7 +28,7 @@ from core_lib.game.version_info import fetch_and_save_version_manifest, get_spec
 from core_lib.runtime.java import find_java_installations, get_java_version
 from core_lib.runtime.mojang import download_java_runtimes, fetch_runtime_manifest, get_current_platform_runtime_key
 from manager.account import AccountManager, LaunchAccount
-from manager.profile import LaunchProfile
+from manager.profile import LaunchProfile, ProfileManager
 from manager.widgets import SelectPathRequest, AskForRequest, SignalTransferItem
 
 MAX_DOWNLOAD_ATTEMPTS = 3
@@ -967,6 +967,7 @@ class LaunchResult:
     error_message: str | None = None
     warnings: list[str] = field(default_factory=list)
     fail_callback: Callable | None = None
+    success_callback: Callable | None = None
 
     @property
     def success(self) -> bool:
@@ -983,19 +984,20 @@ class LaunchResult:
 
 class LaunchManager:
     def __init__(self, app, manifest_manager: ManifestManager, java_manager: JavaManager, game_file_manager: GameFileManager,
-                 account_manager: AccountManager):
+                 account_manager: AccountManager, profile_manager: ProfileManager):
         self.app = app
         self.manifest_mgr = manifest_manager
         self.widget_mgr = app.widget_manager
         self.java_mgr = java_manager
         self.game_file_mgr = game_file_manager
         self.account_mgr = account_manager
+        self.profile_mgr = profile_manager
         self.launching_profiles: set[str] = set()
         self.launched_profiles: list[str] = []
         self.signal = self.LaunchSignal()
 
     class LaunchSignal(QObject):
-        finished = Signal(object, object)  # LaunchProfile, LaunchResult
+        finished = Signal(object, object)  # LaunchProfile, LaunchResult > LaunchProfilePage.launch_finished()
 
     def launch(self, profile: LaunchProfile) -> LaunchResult:
         result = LaunchResult()
@@ -1003,7 +1005,12 @@ class LaunchManager:
         def fail_callback():
             self.profile_failed(profile.profile_id)
 
+        def success_callback():
+            self.profile_mgr.update_last_used_time(profile.profile_id)
+            self.profile_mgr.set_current_profile(profile.profile_id)
+
         result.fail_callback = fail_callback
+        result.success_callback = success_callback
         try:
             version_id = profile.version_id
             version_id = self.manifest_mgr.resolve_version_alias(version_id)
@@ -1083,7 +1090,12 @@ class LaunchManager:
                     "Select a account before launching."
                 )
 
-            launch_account: LaunchAccount = self.account_mgr.get_launch_account()
+            launch_account: LaunchAccount | None = self.account_mgr.get_launch_account()
+
+            if not launch_account:
+                return result.fail(
+                    "Select a launch account before launching."
+                )
 
             # Asset
             default_assets_dir = Path(self.app.work_dir, "assets")
@@ -1307,8 +1319,10 @@ class GameManager(QObject):
         super(GameManager, self).__init__(parent)
         self.app = app
         self.account_manager = app.account_manager
+        self.profile_mgr = app.profile_manager
         self.widget_mgr = app.widget_manager
         self.manifest = ManifestManager(self.app)
         self.java = JavaManager(self.app)
         self.game_file = GameFileManager(self.app, manifest_manager=self.manifest)
-        self.launch = LaunchManager(self.app, self.manifest, self.java, self.game_file, self.account_manager)
+        self.launch = LaunchManager(self.app, self.manifest,
+                                    self.java, self.game_file, self.account_manager, self.profile_mgr)

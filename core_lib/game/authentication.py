@@ -1,5 +1,5 @@
 """
-Store all function for microsoft authentication
+Store all function for Microsoft authentication
 
 WARNING: This module is vibed! With code reviewed!
 """
@@ -11,7 +11,7 @@ from typing import Callable
 import requests
 
 from core_lib.common.exception import AuthenticationSessionException, AuthenticationConnectException, \
-    AuthenticationException
+    AuthenticationException, LauncherHTTPException
 
 MICROSOFT_DEVICE_CODE_URL = "https://login.microsoftonline.com/consumers/oauth2/v2.0/devicecode"
 MICROSOFT_TOKEN_URL = "https://login.microsoftonline.com/consumers/oauth2/v2.0/token"
@@ -462,3 +462,39 @@ def refresh_microsoft_token(client_id: str, refresh_token: str) -> tuple[str, st
         result,
     )
 
+def is_access_token_valid(minecraft_access_token: str) -> bool:
+    """
+    Check if the access token is valid
+    :param minecraft_access_token:
+    :return:
+    """
+    try:
+        response = requests.get(
+            MINECRAFT_PROFILE_URL,
+            headers={"Authorization": f"Bearer {minecraft_access_token}"},
+            timeout=10,
+        )
+    except Exception as e:
+        raise AuthenticationSessionException(
+            status_code=None,
+            user_message="An error occurred while connecting to Minecraft API.",
+        ) from e
+
+    status_code = response.status_code
+
+    if status_code == 400:
+        raise AuthenticationException(
+            user_message="Got bad request response from Minecraft API. Client request format may outdated.",
+        )
+    elif status_code == 401:
+        # Session is invalid
+        return False
+
+    if status_code != 200:
+        raise AuthenticationSessionException(
+            "Get HTTP status code {} while fetch profile data for verifying access token".format(status_code),
+            status_code=response.status_code,
+            user_message="Unable to verify access token. An server error occurred. ({})".format(status_code),
+        )
+
+    return True

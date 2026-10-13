@@ -57,7 +57,7 @@ QToolBar QToolButton:hover {
 
 QToolBar QPushButton:focus,
 QToolBar QToolButton:focus {
-    border-bottom: 2px solid #F52761;
+    border-bottom: 2px solid palette(highlight);
 }
 
 QToolBar QPushButton:pressed,

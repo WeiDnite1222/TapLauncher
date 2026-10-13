@@ -166,7 +166,7 @@ def _check_account(account: dict, account_id: str | None = None, fix_wrong: bool
     )
 
     # Check all required key is exiting
-    if any(not isinstance(account.get(key), str) or not account[key] for key in required_strings):
+    if any(not isinstance(account.get(key), str) or key not in account for key in required_strings):
         return False
 
     # Check account id is match as provided

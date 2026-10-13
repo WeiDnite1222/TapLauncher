@@ -8,13 +8,14 @@ from dataclasses import dataclass
 from pathlib import Path
 
 from PySide6.QtCore import QObject, Signal
-from datetime import datetime
+from datetime import datetime, timezone
 
 from core_lib.common.exception import ProfileException, ProfileLoadException, ProfileSaveException
 from core_lib.game.profile import read_profile_file, is_profiles_valid, \
     get_profile_sample, create_or_save_profile_file, list_profiles as list_profiles_raw, convert_profile_data_to_object, \
     is_profile_exists, create_profile as create_profile_raw, update_profile as update_profile_raw, \
-    get_current_profile_id, set_current_profile_id, remove_profile, duplicate_profile
+    get_current_profile_id, set_current_profile_id, remove_profile, duplicate_profile,  \
+    set_last_used_time
 from core_lib.game.version_info import LATEST_VERSION_ALIASES
 from manager.widgets import AskForRequest
 
@@ -230,6 +231,21 @@ class ProfileManager(QObject):
             )
             return False
 
+    def _commit_profiles(self, updated_profiles: dict) -> bool:
+        """Persist an updated profile document and roll back memory on failure."""
+        previous_profiles = self.profiles
+        previous_modified = self._is_modified
+
+        self.profiles = updated_profiles
+        self._is_modified = True
+
+        if self.save():
+            return True
+
+        self.profiles = previous_profiles
+        self._is_modified = previous_modified
+        return False
+
     def reload(self) -> tuple[bool, dict | None]:
         return self.load(path=self.path)
 
@@ -348,10 +364,10 @@ class ProfileManager(QObject):
             if not is_profiles_valid(updated_profiles):
                 raise ProfileException("Created profile data is invalid.")
 
-            self.profiles = updated_profiles
+            if not self._commit_profiles(updated_profiles):
+                return None
 
-            # Update change event and flag
-            self._is_modified = True
+            # Update change events after the data is persisted.
             self.profile_created.emit(profile_id)
             self.profiles_changed.emit()
 
@@ -442,9 +458,8 @@ class ProfileManager(QObject):
             if profile_data == list_profiles_raw(self.profiles)[profile_id]:
                 return True
 
-            # Update event and flag
-            self.profiles = updated_profiles
-            self._is_modified = True
+            if not self._commit_profiles(updated_profiles):
+                return False
 
             self.profile_updated.emit(profile_id)
             self.profiles_changed.emit()
@@ -472,10 +487,9 @@ class ProfileManager(QObject):
             if is_current_changed:
                 updated_profiles["lastPlayedProfileID"] = None
 
-            self.profiles = updated_profiles
+            if not self._commit_profiles(updated_profiles):
+                return False
 
-            # event
-            self._is_modified = True
             self.profile_removed.emit(profile_id)
 
             if is_current_changed:
@@ -507,9 +521,9 @@ class ProfileManager(QObject):
                 new_name,
             )
 
-            # Update event and flag
-            self.profiles = updated_profiles
-            self._is_modified = True
+            if not self._commit_profiles(updated_profiles):
+                return None
+
             self.profile_created.emit(new_profile_id)
             self.profiles_changed.emit()
 
@@ -551,13 +565,14 @@ class ProfileManager(QObject):
                     "Replacing current profile ID {} to {}".format(existing_id, profile_id)
                 )
 
-            set_current_profile_id(self.profiles, profile_id)
+            updated_profiles = copy.deepcopy(self.profiles)
+            set_current_profile_id(updated_profiles, profile_id)
 
-            # event and flag update
-            self._is_modified = True
+            if not self._commit_profiles(updated_profiles):
+                return False
+
             self.current_profile_changed.emit(profile_id)
             self.profiles_changed.emit()
-
             return True
         except ProfileException as e:
             self.widget_manager.signal.show_error_message.emit(
@@ -567,6 +582,49 @@ class ProfileManager(QObject):
         except Exception as e:
             self.widget_manager.signal.show_error_message.emit(
                 "Unable to set current profile ID. An unknown error occurred {}".format(str(e))
+            )
+            return False
+
+    def update_last_used_time(
+        self,
+        profile_id: str,
+        time: datetime | None = None,
+    ) -> bool:
+        """
+        Update profile last used time
+        :param profile_id:
+        :param time:
+        :return:
+        """
+        if time is None:
+            time = datetime.now(timezone.utc)
+
+        if not self.is_loaded:
+            success, _ = self.load()
+
+            if not success:
+                return False
+
+        if profile_id is not None and not self.contains(profile_id, show_error=True):
+            return False
+
+        try:
+            updated_profiles = copy.deepcopy(self.profiles)
+            set_last_used_time(updated_profiles, profile_id, time)
+
+            if not self._commit_profiles(updated_profiles):
+                return False
+
+            self.profiles_changed.emit()
+            return True
+        except ProfileException as e:
+            self.widget_manager.signal.show_error_message.emit(
+                f"Unable to set last used time for profile ID: {e.user_message}"
+            )
+            return False
+        except Exception as e:
+            self.widget_manager.signal.show_error_message.emit(
+                f"Unable to set last used time for profile with ID {profile_id}. An unknown error occurred {str(e)}"
             )
             return False
 

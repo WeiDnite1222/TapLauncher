@@ -12,6 +12,15 @@ class LauncherException(Exception):
         if user_message is not None:
             self.user_message = user_message
 
+class LauncherHTTPException(LauncherException):
+    user_message = "Launcher error occurred."
+
+    def __init__(self, message=None, status_code=None,*, user_message=None):
+        super().__init__(message or user_message or self.user_message)
+        if user_message is not None:
+            self.user_message = user_message
+        self.status_code = status_code
+
 class HashMismatchException(Exception):
     def __init__(self, hash_name, got_hash, expected_hash, filepath: str | Path):
         if type(filepath) == Path: filepath = Path(filepath).absolute().as_posix()
@@ -109,7 +118,7 @@ class AuthenticationException(LauncherException):
 class AuthenticationConnectException(LauncherException):
     user_message = "An error occurred while connecting to authentication server."
 
-class AuthenticationSessionException(LauncherException):
+class AuthenticationSessionException(LauncherHTTPException):
     user_message = "Authentication failed. Session may expire."
 
 class ThirdPartyAPIException(LauncherException):

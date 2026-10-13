@@ -7,18 +7,19 @@ from __future__ import annotations
 
 import copy
 import datetime
+import queue
 from dataclasses import dataclass, field
 from pathlib import Path
 
 import keyring
-from PySide6.QtCore import QObject, Signal, QThread, QTimer, QSize, Qt
+from PySide6.QtCore import QObject, Signal, QThread, QTimer, QSize, Qt, Slot
 from PySide6.QtGui import QPixmap, QImage
 from PySide6.QtWidgets import QMessageBox
 from keyring.errors import KeyringError, PasswordDeleteError
 
 from constant import LAUNCHER_NAME, CLIENT_ID, ACCESS_TOKEN_KEYWORD, REFRESH_TOKEN_KEYWORD, SYSTEM_KEYRING_KEYWORD
 from core_lib.common.exception import AccountException, AccountLoadException, AccountSaveException, LauncherException, \
-    ThirdPartyAPIException
+    ThirdPartyAPIException, AuthenticationSessionException, AuthenticationException
 from core_lib.game.account import (
     Account,
     convert_account_data_to_object,
@@ -37,11 +38,11 @@ from core_lib.game.account import (
 )
 from core_lib.game.authentication import get_xbox_token_and_user_hash, get_microsoft_token, get_xsts_token, \
     get_minecraft_access_token, get_account_entitlements, get_minecraft_profile, has_minecraft_license, \
-    get_device_code, refresh_microsoft_token
+    get_device_code, refresh_microsoft_token, is_access_token_valid
 from core_lib.game.third_party import get_minecraft_head
 from core_lib.qt.hack import data_url_to_qt_image
-from manager.widgets import AskForRequest
-
+from manager.settings_models import AccountSettings
+from manager.widgets import AskForRequest, SignalTransferItem
 
 DEFAULT_ACCOUNT_RELATIVE_PATH = Path("accounts.json")
 SERVICE_NAME = f"{LAUNCHER_NAME} Account Manager"
@@ -87,6 +88,11 @@ class _AccountUnsetType:
 
 _UNSET = _AccountUnsetType()
 
+@dataclass()
+class AccountLoginStatus:
+    success: bool
+    access_token_is_valid: bool
+    error: str | None
 
 @dataclass(frozen=True)
 class UpdateAccountRequest:
@@ -128,6 +134,7 @@ class LoginSignal(QObject):
     login_succeeded = Signal(dict)
     login_failed = Signal(str)
     finished = Signal()
+    progress_changed = Signal(int, str, bool)
 
 
 class HeadSignal(QObject):
@@ -136,10 +143,16 @@ class HeadSignal(QObject):
     updated = Signal(str)
     failed = Signal(str, str)
 
+class CheckLoginStatusRequest(SignalTransferItem):
+    def __init__(self, account_id: str):
+        super().__init__()
+        self.account_id = account_id
+        self.result_queue = queue.Queue(maxsize=1)
+
 
 class AccountManager(QObject):
     """
-    This manager pack up everything (or most) of the api that provided by core_lib. And make it more easily to use.
+    This manager packs up everything (or most) of the api that provided by core_lib. And make it more easily to use.
 
     A similar version of the Profile Manager!
     """
@@ -153,6 +166,11 @@ class AccountManager(QObject):
     replace_relative_path = Signal(str)
     token_refreshed = Signal(str)
     token_refresh_failed = Signal(str, str)
+    token_refresh_started = Signal(str)
+    token_refresh_queue_finished = Signal()
+    check_login_status_requested = Signal(str)
+    login_status_check_started = Signal(str)
+    login_status_checked = Signal(str, object)
 
     TOKEN_REFRESH_INTERVAL_MS = 5 * 60 * 1000
     TOKEN_REFRESH_MARGIN = datetime.timedelta(minutes=10)
@@ -173,20 +191,22 @@ class AccountManager(QObject):
 
         # Refresh expiring credentials without blocking the GUI thread.
         self._refresh_timer = QTimer(self)
-        self._refresh_timer.setInterval(self.TOKEN_REFRESH_INTERVAL_MS)
+        self._refresh_timer.setInterval(self.settings_token_refresh_interval * 1000)
         self._refresh_timer.timeout.connect(self.refresh_expiring_tokens)
         self._refresh_thread: QThread | None = None
         self._refresh_worker: TokenRefreshWorker | None = None
+        self._refresh_account_id: str | None = None
+        self._refresh_queue: list[str] = []
+        self._refresh_queue_active = False
 
         # Account head downloads. Keep thread and worker references alive until
         # QThread.finished so Qt does not destroy a running thread.
         self.head_signal = HeadSignal(self)
         self._head_jobs: dict[str, tuple[QThread, HeadWorker]] = {}
+        self._login_status_jobs: dict[str, tuple[QThread, CheckLoginStatusWorker]] = {}
+        self.check_login_status_requested.connect(self._start_login_status_check)
 
         self.account_load.connect(self.load)
-
-        # Flags (For settings page)
-        self.use_system_keyring = True
 
     #
     # Account File (aka AccountData) Management
@@ -198,6 +218,24 @@ class AccountManager(QObject):
     def _show_error(self, message: str, code: str = "account_error") -> None:
         self.error_occurred.emit(code, message)
         self.widget_manager.signal.show_error_message.emit(message)
+
+    @property
+    def settings_use_system_keyring(self) -> bool:
+        return self.account_settings.credentials_save_method == "system-keyring"
+
+    @property
+    def settings_token_refresh_interval(self) -> int:
+        return self.account_settings.token_refresh_interval
+
+    def set_token_refresh_interval(self, interval_seconds: int,) -> None:
+        was_active = self._refresh_timer.isActive()
+
+        self._refresh_timer.setInterval(
+            interval_seconds * 1000
+        )
+
+        if was_active:
+            self._refresh_timer.start()
 
     # File lifetime
     def create_accounts(self, path: str | Path | None = None) -> bool:
@@ -252,10 +290,17 @@ class AccountManager(QObject):
                 self._show_error("Invalid account file.", "invalid_file")
                 return False, None
 
-            if self.use_system_keyring:
+            if self.settings_use_system_keyring:
                 migrated = self._migrate_plaintext_tokens(result)
                 if migrated is None:
                     return False, None
+                if migrated:
+                    create_or_save_account_file(result, path, create_backup=True)
+            else:
+                migrated = self._migrate_keyring_tokens(result)
+                if migrated is None:
+                    return False, None
+
                 if migrated:
                     create_or_save_account_file(result, path, create_backup=True)
 
@@ -284,7 +329,7 @@ class AccountManager(QObject):
         path = Path(path) if path is not None else self.path
 
         try:
-            if self.use_system_keyring and self._contains_plaintext_tokens(self.accounts):
+            if self.settings_use_system_keyring and self._contains_plaintext_tokens(self.accounts):
                 self._show_error(
                     "Refusing to save account data containing plaintext tokens.",
                     "plaintext_credentials",
@@ -406,7 +451,7 @@ class AccountManager(QObject):
             updated = copy.deepcopy(self.accounts)
 
             # Use system keyring
-            if self.use_system_keyring:
+            if self.settings_use_system_keyring:
                 previous_tokens = self._credential_snapshot(request.account_id)
                 if not self.save_token(request.account_id, ACCESS_TOKEN_KEYWORD, request.access_token):
                     return None
@@ -419,8 +464,8 @@ class AccountManager(QObject):
             account = Account(
                 account_id=request.account_id,
                 username=request.username,
-                access_token=SYSTEM_KEYRING_KEYWORD if self.use_system_keyring else request.access_token,
-                refresh_token=SYSTEM_KEYRING_KEYWORD if self.use_system_keyring else request.refresh_token,
+                access_token=SYSTEM_KEYRING_KEYWORD if self.settings_use_system_keyring else request.access_token,
+                refresh_token=SYSTEM_KEYRING_KEYWORD if self.settings_use_system_keyring else request.refresh_token,
                 access_token_expires_at=request.access_token_expires_at,
                 refresh_token_expires_at=request.refresh_token_expires_at, # Microsoft don't provide refresh token
                 # expire time.
@@ -487,7 +532,7 @@ class AccountManager(QObject):
             for attribute, key in field_map.items():
                 value = getattr(changes, attribute)
                 if value is not None:
-                    if key in ("accessToken", "refreshToken") and self.use_system_keyring:
+                    if key in ("accessToken", "refreshToken") and self.settings_use_system_keyring:
                         if previous_tokens is None:
                             previous_tokens = self._credential_snapshot(account_id)
                         token_type = (
@@ -625,7 +670,7 @@ class AccountManager(QObject):
         if account is None:
             return None
 
-        if account.access_token == SYSTEM_KEYRING_KEYWORD and self.use_system_keyring:
+        if account.access_token == SYSTEM_KEYRING_KEYWORD and self.settings_use_system_keyring:
             access_token = self.get_token(
                 account.id,
                 ACCESS_TOKEN_KEYWORD,
@@ -817,6 +862,26 @@ class AccountManager(QObject):
 
         return None
 
+    def get_actual_token(self, token_type: str, raw_value: str, account_id: str) -> str | None:
+        """
+        Get actual value of the token
+
+        If the token is stored in the system keyring, this function returns the value from keyring.
+        Otherwise, it returns the raw value.
+        :param token_type:
+        :param raw_value:
+        :param account_id:
+        :return:
+        Return None if the account does not exist.
+        """
+        if not self.contains(account_id):
+            return None
+
+        if raw_value == SYSTEM_KEYRING_KEYWORD:
+            return self.get_token(account_id, token_type)
+
+        return raw_value or None
+
     def delete_token(self, account_id: str, token_type: str, missing_ok: bool = False) -> bool:
         """
         Delete account token from system keyring
@@ -908,6 +973,45 @@ class AccountManager(QObject):
 
         return changed
 
+    def _migrate_keyring_tokens(self, accounts: dict) -> bool | None:
+        """Move keyring credentials to legacy plaintext.
+
+        Is not recommended because saving token in plaintext is insecure.
+        Use it at your own risk!
+        :return: True if any credentials were migrated, False if no credentials were migrated, None if migration failed
+        """
+        changed = False
+        errors = []
+        for account_id, raw in list_accounts_raw(accounts).items():
+            tokens = {
+                ACCESS_TOKEN_KEYWORD: raw.get(ACCESS_TOKEN_KEYWORD) == SYSTEM_KEYRING_KEYWORD,
+                REFRESH_TOKEN_KEYWORD: raw.get(REFRESH_TOKEN_KEYWORD) == SYSTEM_KEYRING_KEYWORD
+            }
+
+            for keyword, is_unmigrated in tokens.items():
+                if not is_unmigrated: continue
+
+                full_name = self.get_token_full_name(account_id, keyword)
+                token = keyring.get_password(SERVICE_NAME, full_name)
+
+                if token is None:
+                    errors.append(f"Token type {keyword} for account {account_id} is not found in keyring")
+                    continue
+
+                raw[keyword] = token
+                # Delete token in keyring
+                keyring.delete_password(SERVICE_NAME, full_name)
+                if not changed: changed = True
+
+        if errors:
+            self._show_error(
+                "\n".join(errors),
+                "credential_migration_failed",
+            )
+            return None
+
+        return changed
+
     @property
     def path(self) -> Path:
         if self._path is None:
@@ -948,30 +1052,94 @@ class AccountManager(QObject):
         self._refresh_timer.stop()
 
     def refresh_expiring_tokens(self) -> bool:
-        """Refresh one expiring MSA account; later accounts run on following ticks."""
-        if self._refresh_thread is not None or not self.is_loaded:
+        """Queue MSA accounts whose access tokens are near expiry."""
+        if not self.is_loaded:
             return False
 
         deadline = datetime.datetime.now(datetime.timezone.utc) + self.TOKEN_REFRESH_MARGIN
+        account_ids = []
         for summary in self.list_accounts():
             if summary.account_type != "msa":
                 continue
+
             account = self.get_account(summary.id)
             if account is None:
                 continue
+
             expires_at = self._as_utc_datetime(account.access_token_expires_at)
             if expires_at is not None and expires_at > deadline:
                 continue
 
-            refresh_token = account.refresh_token
-            if refresh_token == SYSTEM_KEYRING_KEYWORD and self.use_system_keyring:
-                refresh_token = self.get_token(account.id, REFRESH_TOKEN_KEYWORD)
-            if not refresh_token or refresh_token == SYSTEM_KEYRING_KEYWORD:
-                self.app.logger.warning("Cannot refresh account %s: refresh token is missing", account.id)
+            account_ids.append(account.id)
+
+        return self._queue_token_refreshes(account_ids) > 0
+
+    def refresh_all_tokens(self) -> int:
+        """Queue a refresh attempt for every Microsoft account."""
+        if not self.is_loaded:
+            return 0
+
+        return self._queue_token_refreshes(
+            summary.id
+            for summary in self.list_accounts()
+            if summary.account_type == "msa"
+        )
+
+    def refresh_account_token(self, account_id: str) -> bool:
+        """Queue a refresh attempt for one Microsoft account."""
+        if not self.contains(account_id):
+            return False
+
+        account = self.get_account(account_id)
+        if account is None or account.account_type != "msa":
+            return False
+
+        return self._queue_token_refreshes((account_id,)) > 0
+
+    def _queue_token_refreshes(self, account_ids) -> int:
+        queued_ids = set(self._refresh_queue)
+        if self._refresh_account_id is not None:
+            queued_ids.add(self._refresh_account_id)
+
+        added = 0
+        for account_id in account_ids:
+            if account_id in queued_ids:
+                continue
+            self._refresh_queue.append(account_id)
+            queued_ids.add(account_id)
+            added += 1
+
+        if added:
+            self._refresh_queue_active = True
+            self._start_next_token_refresh()
+
+        return added
+
+    def _start_next_token_refresh(self) -> None:
+        if self._refresh_thread is not None:
+            return
+
+        while self._refresh_queue:
+            account_id = self._refresh_queue.pop(0)
+            if not self.contains(account_id):
                 continue
 
+            account = self.get_account(account_id)
+            if account is None or account.account_type != "msa":
+                continue
+
+            refresh_token = self.get_actual_token(
+                REFRESH_TOKEN_KEYWORD,
+                account.refresh_token,
+                account_id,
+            )
+            if not refresh_token:
+                self._token_refresh_failed(account_id, "Refresh token is missing")
+                continue
+
+            self._refresh_account_id = account_id
             self._refresh_thread = QThread(self)
-            self._refresh_worker = TokenRefreshWorker(account.id, refresh_token, CLIENT_ID)
+            self._refresh_worker = TokenRefreshWorker(account_id, refresh_token, self.get_client_id())
             self._refresh_worker.moveToThread(self._refresh_thread)
             self._refresh_thread.started.connect(self._refresh_worker.run)
             self._refresh_worker.succeeded.connect(self._token_refresh_succeeded)
@@ -979,9 +1147,13 @@ class AccountManager(QObject):
             self._refresh_worker.finished.connect(self._refresh_thread.quit)
             self._refresh_worker.finished.connect(self._refresh_worker.deleteLater)
             self._refresh_thread.finished.connect(self._token_refresh_finished)
+            self.token_refresh_started.emit(account_id)
             self._refresh_thread.start()
-            return True
-        return False
+            return
+
+        if self._refresh_queue_active:
+            self._refresh_queue_active = False
+            self.token_refresh_queue_finished.emit()
 
     def _token_refresh_succeeded(self, account_id: str, result: dict) -> None:
         if not self.contains(account_id):
@@ -1009,10 +1181,32 @@ class AccountManager(QObject):
         thread = self._refresh_thread
         self._refresh_worker = None
         self._refresh_thread = None
+        self._refresh_account_id = None
         if thread is not None:
             thread.deleteLater()
+        QTimer.singleShot(0, self._start_next_token_refresh)
 
-    def start_login(self, client_id: str = CLIENT_ID):
+    @property
+    def account_settings(self):
+        return self.app.settings_manager.get("account", AccountSettings)
+
+    @property
+    def settings_custom_client_id(self):
+        return self.account_settings.custom_client_id
+
+    def get_client_id(self):
+        if self.settings_custom_client_id:
+            return self.settings_custom_client_id
+
+        return CLIENT_ID
+
+    def start_login(self):
+        custom_client_id = self.get_client_id()
+
+        if custom_client_id:
+            self.app.logger.debug("Using custom client ID: %s", custom_client_id)
+            client_id = custom_client_id
+
         if self.login_thread is not None:
             return False
 
@@ -1029,6 +1223,9 @@ class AccountManager(QObject):
         )
         self.login_worker.login_failed.connect(
             self.login_signal.login_failed.emit
+        )
+        self.login_worker.progress_changed.connect(
+            self.login_signal.progress_changed.emit
         )
         self.login_thread.started.connect(self.login_worker.run)
         self.login_worker.finished.connect(self.login_thread.quit)
@@ -1107,6 +1304,82 @@ class AccountManager(QObject):
     def cancel_login(self):
         if self.login_worker is not None:
             self.login_worker.cancel()
+
+    @Slot(str)
+    def _start_login_status_check(self, account_id: str):
+        if account_id in self._login_status_jobs:
+            # ignore account already checking login status
+            return
+
+        detail: AccountDetail | None = self.get_account(account_id)
+
+        if detail is None:
+            self.login_status_checked.emit(
+                account_id,
+                AccountLoginStatus(
+                    success=False,
+                    access_token_is_valid=False,
+                    error="Account does not exist.",
+                ),
+            )
+            return
+
+        access_token = self.get_actual_token(ACCESS_TOKEN_KEYWORD, detail.access_token, account_id)
+
+        if access_token is None:
+            self.login_status_checked.emit(
+                account_id,
+                AccountLoginStatus(
+                    success=False,
+                    access_token_is_valid=False,
+                    error="Unable to get access token for account with ID {}. Token is invalid.".format(account_id),
+                ),
+            )
+            return
+
+        # Start background thread
+        thread = QThread(self)
+        worker = CheckLoginStatusWorker(
+            account_id,
+            access_token,
+        )
+        worker.moveToThread(thread)
+
+        self._login_status_jobs[account_id] = (
+            thread,
+            worker,
+        )
+
+        thread.started.connect(worker.run)
+
+        worker.completed.connect(
+            self.login_status_checked.emit
+        )
+
+        worker.finished.connect(thread.quit)
+        worker.finished.connect(worker.deleteLater)
+
+        thread.finished.connect(
+            lambda target_id=account_id:
+            self._login_status_check_finished(
+                target_id
+            )
+        )
+
+        self.login_status_check_started.emit(account_id)
+        thread.start()
+
+    def _login_status_check_finished(self, account_id: str):
+        job = self._login_status_jobs.pop(
+            account_id,
+            None,
+        )
+
+        if job is None:
+            return
+
+        thread, _worker = job
+        thread.deleteLater()
 
     #
     # Third Party
@@ -1241,6 +1514,7 @@ class LoginWorker(QObject):
     login_succeeded = Signal(dict)
     login_failed = Signal(str)
     finished = Signal()
+    progress_changed = Signal(int, str, bool)
 
     def __init__(self, client_id: str):
         super().__init__()
@@ -1252,9 +1526,16 @@ class LoginWorker(QObject):
 
     def run(self):
         try:
+            self.progress_changed.emit(
+                5, "Requesting a Microsoft sign-in code...", False
+            )
             # Get device code
             device_code, device = get_device_code(self.client_id)
             self.device_code_ready.emit(device)
+
+            self.progress_changed.emit(
+                15, "Waiting for browser authentication...", True
+            )
 
             microsoft_access_token, refresh_token, microsoft = get_microsoft_token(
                 self.client_id,
@@ -1263,10 +1544,21 @@ class LoginWorker(QObject):
                 expires_in=device.get("expires_in", 900),
                 cancelled=lambda: self._cancelled,
             )
+            self.progress_changed.emit(35, "Got microsoft token.", False)
+
+            self.progress_changed.emit(50, "Get xbox token...", False)
             xbox_token, user_hash, _ = get_xbox_token_and_user_hash(microsoft_access_token)
+
+            self.progress_changed.emit(65, "Getting XSTS token...", False)
             xsts_token, _ = get_xsts_token(xbox_token)
+
+            self.progress_changed.emit(75, "Getting minecraft access token...", False)
             minecraft_access_token, minecraft = get_minecraft_access_token(user_hash, xsts_token)
+
+            self.progress_changed.emit(80, "Fetching minecraft entitlements...", False)
             entitlements = get_account_entitlements(minecraft_access_token)
+
+            self.progress_changed.emit(90, "Fetching minecraft profile...", False)
             profile = get_minecraft_profile(minecraft_access_token)
 
             # convert expire value
@@ -1276,6 +1568,7 @@ class LoginWorker(QObject):
             except (TypeError, ValueError):
                 access_expires_in = 86400
 
+            self.progress_changed.emit(95, "Completing login...", False)
             self.login_succeeded.emit({
                 "id": profile["id"], # UUID
                 "name": profile["name"],
@@ -1287,6 +1580,7 @@ class LoginWorker(QObject):
                 "refresh_token_expires_at": now + datetime.timedelta(days=90),
                 "has_license": has_minecraft_license(entitlements),
             })
+            self.progress_changed.emit(100, "Finished!", True)
         except InterruptedError:
             pass
         except LauncherException as exc:
@@ -1346,4 +1640,29 @@ class TokenRefreshWorker(QObject):
         except Exception as exc:
             self.failed.emit(self.account_id, str(exc))
         finally:
+            self.finished.emit()
+
+class CheckLoginStatusWorker(QObject):
+    """Check account login status"""
+    completed = Signal(str, object)
+    finished = Signal()
+
+    def __init__(self, account_id: str, access_token: str):
+        super().__init__()
+        self.account_id = account_id
+        self.access_token = access_token
+
+    def run(self):
+        status = AccountLoginStatus(False, False, None)
+
+        try:
+            status.access_token_is_valid = is_access_token_valid(self.access_token)
+            status.success = True
+        except LauncherException as error:
+            status.error = error.user_message
+        except Exception as error:
+            status.error = str(error)
+
+        finally:
+            self.completed.emit(self.account_id, status)
             self.finished.emit()

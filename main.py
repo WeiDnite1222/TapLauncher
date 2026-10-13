@@ -5,7 +5,7 @@
 # nuitka-project: --output-dir={MAIN_DIRECTORY}/build
 # nuitka-project: --output-filename=launcher
 # nuitka-project: --product-name=TapLauncher
-# nuitka-project: --file-description=A Minecraft Launcher
+# nuitka-project: --file-description=TapLauncher
 # nuitka-project: --copyright=Copyright (c) Wei's Garage
 # nuitka-project: --assume-yes-for-downloads
 # nuitka-project-if: {OS} == "Windows":
@@ -29,7 +29,7 @@ from platformdirs import (
 from app import Launcher
 from constant import LAUNCHER_DIR_NAME
 
-from core_lib.log.default import DEFAULT_FORMAT, DEFAULT_DATE_FORMAT, get_colorful_handler
+from core_lib.log.default import DEFAULT_FORMAT, DEFAULT_DATE_FORMAT, get_colorful_handler, LogCaptureHandler
 from core_lib.qt import messagebox
 
 def show_error(message):
@@ -92,11 +92,21 @@ def main():
     root_logger.setLevel(level)
     root_logger.addHandler(get_colorful_handler())
 
+    # log record handler
+    capture_handler = LogCaptureHandler(max_messages=5000)
+    capture_handler.setLevel(logging.DEBUG)
+    capture_handler.setFormatter(logging.Formatter(
+        DEFAULT_FORMAT,
+        datefmt=DEFAULT_DATE_FORMAT,
+    ))
+
+    root_logger.addHandler(capture_handler)
+
     # Logger configure
     logging.basicConfig(format=DEFAULT_FORMAT, datefmt=DEFAULT_DATE_FORMAT, level=level)
 
     # Start (the real) launcher
-    app = Launcher(logger, debug=debug)
+    app = Launcher(logger, capture_handler, debug=debug)
     sys.exit(app.exec())
 
 

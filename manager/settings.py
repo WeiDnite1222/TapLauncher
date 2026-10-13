@@ -163,9 +163,10 @@ class SettingsManager:
         data = {
             section: self._models[section]
             .model_validate(self._settings[section])
-            .model_dump(mode="json")
+            .model_dump(mode="json", exclude_none=True) # ignore None keys
             for section in self._models
         }
+
         config_path.parent.mkdir(parents=True, exist_ok=True)
         temporary_path = config_path.with_suffix(config_path.suffix + ".tmp")
         temporary_path.write_bytes(tomli_w.dumps(data).encode("utf-8"))
