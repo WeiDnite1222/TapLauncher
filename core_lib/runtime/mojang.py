@@ -1,8 +1,10 @@
 import hashlib
 import json
 import logging
+import os
 import platform
 from concurrent.futures import ThreadPoolExecutor, as_completed
+from dataclasses import dataclass
 from pathlib import Path
 from typing import Callable
 
@@ -10,7 +12,7 @@ import requests
 
 from ..common.common import get_platform_info, FileObject, download_multiple_files
 from ..common.exception import RuntimeManifestFetchException, UnsupportedPlatformException, \
-    RuntimeManifestDataException, HashMismatchException, DownloadException
+    RuntimeManifestDataException, HashMismatchException, DownloadException, LauncherException
 from ..game.version_info import RUNTIME_PLATFORM_MAP, RUNTIME_ARCH_EMPTY, RUNTIME_ARCH_MAP
 
 MOJANG_RUNTIME_MANIFEST = "https://launchermeta.mojang.com/v1/products/java-runtime/2ec0cc96c44e5a76b9c8b7c39df7210883d12871/all.json"
@@ -159,11 +161,22 @@ def get_support_runtime_manifest(root_runtime_manifest: dict, require_component:
             "Unable to fetch runtime manifest from {}: {}".format(url, e),
         )
 
+@dataclass
+class RuntimeCheckResult:
+    # file and dir
+    is_executable: bool
+    target_path: FileObject | Path | None
 
-def _check_runtime_file(relative_path, file_type: str, sha1: str | None, size: str | None, url: str | None,
-                        executable: bool, runtime_dir: Path, no_hash_check: bool = False) -> tuple[
-    bool, FileObject | Path | None]:
+    # symlink only
+    is_symlink: bool
+    source_path: Path
+
+def _check_runtime_file(relative_path, source_path: str | None, file_type: str, sha1: str | None, size: str | None, url: str | None,
+                        executable: bool, runtime_dir: Path, no_hash_check: bool = False) -> RuntimeCheckResult:
     full_path = runtime_dir / Path(relative_path)
+    source_path = (runtime_dir / Path(source_path)) if source_path else None
+
+    result = RuntimeCheckResult(is_executable=executable, target_path=None, is_symlink=False, source_path=source_path)
 
     if (not sha1 and not no_hash_check) and file_type == "file":
         raise RuntimeManifestDataException(
@@ -180,7 +193,6 @@ def _check_runtime_file(relative_path, file_type: str, sha1: str | None, size: s
             "Runtime manifest missing file type. {}".format(relative_path)
         )
 
-    needs_download = True
     if file_type == "file":
         target_file = FileObject(
             path=full_path,
@@ -209,20 +221,26 @@ def _check_runtime_file(relative_path, file_type: str, sha1: str | None, size: s
                         suffix
                     )
                 )
+            else:
+                result.target_path = target_file
     elif file_type == "directory":
         target_file = Path(full_path)
-        if target_file.exists() and target_file.is_dir():
-            needs_download = False
+
+        if not target_file.exists() or not target_file.is_dir():
+            result.target_path = target_file
+    elif file_type == "link":
+        if not Path(full_path).is_symlink() or os.readlink(full_path) != source_path:
+            result.target_path = Path(full_path)
     else:
         raise RuntimeManifestDataException(
             "Unsupported file type: {}".format(file_type)
         )
 
-    return executable == True, target_file if needs_download else None
+    return result
 
 
 def collect_runtime_files(manifest: dict, runtime_dir: Path, max_workers=RUNTIME_CHECK_MAX_WORKERS,
-                          no_hash_check=False, use_raw=True) -> tuple[list[FileObject], list[FileObject], list[Path]]:
+                          no_hash_check=False, use_raw=True) -> tuple[list[FileObject], list[FileObject], list[Path], list[dict[str, Path]]]:
     """
     Download runtime files from given manifest.
     :param manifest:
@@ -234,10 +252,12 @@ def collect_runtime_files(manifest: dict, runtime_dir: Path, max_workers=RUNTIME
         executables: Executable files that need to be downloaded and fix permission on some platform
         files: Runtime files that need to be downloaded
         dirs: Directories that need to be created
+        symlinks: Symbolic links that need to be created
     """
     result_executables = []
     result_files = []
     result_dirs = []
+    result_symlinks = []
     files = manifest.get("files", {})
 
     with ThreadPoolExecutor(max_workers=max_workers) as executor:
@@ -245,6 +265,7 @@ def collect_runtime_files(manifest: dict, runtime_dir: Path, max_workers=RUNTIME
 
         for relative_path in files:
             data = files[relative_path]
+            target_path = data.get("target")
             downloads = data.get("downloads", {})
             artifact = downloads.get("raw" if use_raw else "lzma", {})
             file_type = data.get("type")
@@ -253,19 +274,43 @@ def collect_runtime_files(manifest: dict, runtime_dir: Path, max_workers=RUNTIME
             url = artifact.get("url")
             executable = data.get("executable", False)
 
-            futures.append(executor.submit(_check_runtime_file, relative_path, file_type, sha1, size, url,
+            futures.append(executor.submit(_check_runtime_file, relative_path, target_path, file_type, sha1, size, url,
                                            executable, runtime_dir, no_hash_check))
 
 
         for future in as_completed(futures):
-            is_executable, file = future.result()
+            result: RuntimeCheckResult = future.result()
+            target_path = result.target_path
 
-            if file and isinstance(file, FileObject) and not is_executable:
-                result_files.append(file)
-            elif file and isinstance(file, FileObject) and is_executable:
-                result_executables.append(file)
-            elif file and isinstance(file, Path):
-                result_dirs.append(file)
+            if not target_path:
+                logger.debug("No target path found, skip process: {}".format(target_path))
+                continue
+
+            if not isinstance(target_path, (FileObject, Path)):
+                logger.debug("Target path is not FileObject or Path, skip process: {}".format(target_path))
+                continue
+
+            if isinstance(target_path, FileObject):
+                target_list = result_executables if result.is_executable else result_files
+                target_list.append(target_path)
+            elif isinstance(target_path, Path):
+                if result.is_symlink:
+                    result_symlinks.append({""})
+                else:
+                    result_dirs.append(target_path)
+
+            if result.target_path and isinstance(result.target_path, FileObject) and not result.is_executable:
+                result_files.append(result.target_path)
+            elif result.target_path and isinstance(result.target_path, FileObject) and result.is_executable:
+                result_executables.append(result.target_path)
+            elif result.target_path and isinstance(result.target_path, Path):
+                if result.is_symlink:
+                    if not result.source_path:
+                        raise RuntimeManifestDataException("Runtime data missing symlink source path.")
+
+                    result_symlinks.append({"destination": result.target_path, "source": result.source_path})
+                else:
+                    result_dirs.append(result.target_path)
 
     if not use_raw:
         logger.warning(
@@ -273,10 +318,10 @@ def collect_runtime_files(manifest: dict, runtime_dir: Path, max_workers=RUNTIME
             "You will likely need to decompress all files before using them."
         )
 
-    return result_executables, result_files, result_dirs
+    return result_executables, result_files, result_dirs, result_symlinks
 
 
-def handle_runtime_dir_and_executable_process(dirs: list[Path], executables: list[Path | FileObject], max_workers=6):
+def post_process_runtime_dir(dirs: list[Path], executables: list[Path | FileObject], symlinks: list[dict[str, Path]], max_workers=6):
     def _worker(path: Path | FileObject, is_executable: bool):
         if isinstance(path, FileObject):
             path = path.path
@@ -304,6 +349,18 @@ def handle_runtime_dir_and_executable_process(dirs: list[Path], executables: lis
         for future in as_completed(futures):
             future.result()
 
+    for value in symlinks:
+        dest_path = value.get("destination")
+        source_path = value.get("source")
+
+        # ignore existing
+        if Path(source_path).is_symlink() and os.readlink(source_path) == dest_path:
+            return
+
+        try:
+            os.symlink(source_path, dest_path)
+        except Exception as exc:
+            raise LauncherException(f"Failed to symlink {source_path} to {dest_path}: {exc}")
 
 def download_java_runtimes(component: str, runtime_dir: Path, no_hash_check: bool = False,
                            progress_callback: Callable[[str, float], None] = None,
@@ -325,7 +382,7 @@ def download_java_runtimes(component: str, runtime_dir: Path, no_hash_check: boo
     # Fetch manifest
     root_manifest = fetch_runtime_manifest()
     manifest = get_support_runtime_manifest(root_manifest, component, no_hash_check=no_hash_check)
-    executables, files, dirs = collect_runtime_files(manifest, runtime_dir, max_workers=max_check_workers,
+    executables, files, dirs, symlinks = collect_runtime_files(manifest, runtime_dir, max_workers=max_check_workers,
                                                      no_hash_check=no_hash_check)
 
     # Download runtime files
@@ -348,6 +405,6 @@ def download_java_runtimes(component: str, runtime_dir: Path, no_hash_check: boo
             "Unable to download some runtime files.\n"
         )
 
-    handle_runtime_dir_and_executable_process(dirs, executables, max_workers=max_check_workers)
+    post_process_runtime_dir(dirs, executables, symlinks, max_workers=max_check_workers)
 
     return

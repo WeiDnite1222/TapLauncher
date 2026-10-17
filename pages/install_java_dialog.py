@@ -1,4 +1,5 @@
 import threading
+import traceback
 
 from PySide6.QtCore import QObject, Signal
 from PySide6.QtWidgets import (
@@ -132,6 +133,7 @@ class InstallJavaDialog(QDialog):
                 self.app.widget_manager.download_signal.finished.emit(task_id)
                 self.worker_signals.installed.emit(runtime, None)
             except Exception as exc:
+                traceback.print_exc()
                 self.app.widget_manager.download_signal.failed.emit(task_id, str(exc))
                 self.worker_signals.installed.emit(None, exc)
 
