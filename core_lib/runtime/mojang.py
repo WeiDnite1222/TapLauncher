@@ -164,19 +164,20 @@ def get_support_runtime_manifest(root_runtime_manifest: dict, require_component:
 @dataclass
 class RuntimeCheckResult:
     # file and dir
+    skip: bool
     is_executable: bool
     target_path: FileObject | Path | None
 
     # symlink only
     is_symlink: bool
-    source_path: Path
+    source_path: Path | str | None
 
 def _check_runtime_file(relative_path, source_path: str | None, file_type: str, sha1: str | None, size: str | None, url: str | None,
                         executable: bool, runtime_dir: Path, no_hash_check: bool = False) -> RuntimeCheckResult:
     full_path = runtime_dir / Path(relative_path)
-    source_path = (runtime_dir / Path(source_path)) if source_path else None
+    source_path = Path(source_path) if source_path else None
 
-    result = RuntimeCheckResult(is_executable=executable, target_path=None, is_symlink=False, source_path=source_path)
+    result = RuntimeCheckResult(skip=False, is_executable=executable, target_path=None, is_symlink=False, source_path=source_path)
 
     if (not sha1 and not no_hash_check) and file_type == "file":
         raise RuntimeManifestDataException(
@@ -221,16 +222,25 @@ def _check_runtime_file(relative_path, source_path: str | None, file_type: str, 
                         suffix
                     )
                 )
-            else:
-                result.target_path = target_file
+                result.skip = True
+
+        result.target_path = target_file
     elif file_type == "directory":
         target_file = Path(full_path)
-
-        if not target_file.exists() or not target_file.is_dir():
-            result.target_path = target_file
+        result.target_path = target_file
+        if target_file.exists() and target_file.is_dir():
+            result.skip = True
     elif file_type == "link":
-        if not Path(full_path).is_symlink() or os.readlink(full_path) != source_path:
-            result.target_path = Path(full_path)
+        result.is_symlink = True
+        result.target_path = Path(full_path)
+
+        if not isinstance(source_path, Path):
+            raise RuntimeManifestDataException(
+                "Invalid source path: {}".format(source_path)
+            )
+
+        if Path(full_path).is_symlink() and os.readlink(full_path) == source_path.as_posix():
+            result.skip = True
     else:
         raise RuntimeManifestDataException(
             "Unsupported file type: {}".format(file_type)
@@ -281,9 +291,10 @@ def collect_runtime_files(manifest: dict, runtime_dir: Path, max_workers=RUNTIME
         for future in as_completed(futures):
             result: RuntimeCheckResult = future.result()
             target_path = result.target_path
+            skip = result.skip
 
-            if not target_path:
-                logger.debug("No target path found, skip process: {}".format(target_path))
+            if skip:
+                logger.debug("Skip file: {}".format(target_path))
                 continue
 
             if not isinstance(target_path, (FileObject, Path)):
@@ -295,22 +306,14 @@ def collect_runtime_files(manifest: dict, runtime_dir: Path, max_workers=RUNTIME
                 target_list.append(target_path)
             elif isinstance(target_path, Path):
                 if result.is_symlink:
-                    result_symlinks.append({""})
+                    if not isinstance(result.source_path, (str, Path)):
+                        raise RuntimeManifestDataException(
+                            "Invalid source path: {}".format(result.source_path)
+                        )
+
+                    result_symlinks.append({"destination": target_path, "source": result.source_path})
                 else:
                     result_dirs.append(target_path)
-
-            if result.target_path and isinstance(result.target_path, FileObject) and not result.is_executable:
-                result_files.append(result.target_path)
-            elif result.target_path and isinstance(result.target_path, FileObject) and result.is_executable:
-                result_executables.append(result.target_path)
-            elif result.target_path and isinstance(result.target_path, Path):
-                if result.is_symlink:
-                    if not result.source_path:
-                        raise RuntimeManifestDataException("Runtime data missing symlink source path.")
-
-                    result_symlinks.append({"destination": result.target_path, "source": result.source_path})
-                else:
-                    result_dirs.append(result.target_path)
 
     if not use_raw:
         logger.warning(
@@ -350,17 +353,41 @@ def post_process_runtime_dir(dirs: list[Path], executables: list[Path | FileObje
             future.result()
 
     for value in symlinks:
-        dest_path = value.get("destination")
-        source_path = value.get("source")
+        dest_path_raw: str | Path | None = value.get("destination")
+        source_path_raw: str | Path | None = value.get("source")
+
+        if source_path_raw is None:
+            raise LauncherException("Invalid source path: {}".format(source_path_raw))
+
+        if dest_path_raw is None:
+            raise LauncherException("Invalid destination path: {}".format(dest_path_raw))
+
+        source_path = source_path_raw if isinstance(source_path_raw, Path) else Path(source_path_raw)
+        dest_path = dest_path_raw if isinstance(dest_path_raw, Path) else Path(dest_path_raw)
 
         # ignore existing
-        if Path(source_path).is_symlink() and os.readlink(source_path) == dest_path:
-            return
+        if Path(dest_path).is_symlink() and os.readlink(dest_path) == str(source_path):
+            continue
 
         try:
+            dest_path.parent.mkdir(parents=True, exist_ok=True)
+
+            if dest_path.is_symlink():
+                if os.readlink(dest_path) == str(source_path):
+                    continue
+                dest_path.unlink()
+            elif dest_path.is_dir():
+                dest_path.rmdir()
+            elif dest_path.exists():
+                raise LauncherException(
+                    f"Cannot create symlink: destination is an existing file: {dest_path}"
+                )
+
             os.symlink(source_path, dest_path)
         except Exception as exc:
-            raise LauncherException(f"Failed to symlink {source_path} to {dest_path}: {exc}")
+            raise LauncherException(
+                f"Failed to create symlink {dest_path} -> {source_path}: {exc}"
+            ) from exc
 
 def download_java_runtimes(component: str, runtime_dir: Path, no_hash_check: bool = False,
                            progress_callback: Callable[[str, float], None] = None,
@@ -405,6 +432,15 @@ def download_java_runtimes(component: str, runtime_dir: Path, no_hash_check: boo
             "Unable to download some runtime files.\n"
         )
 
-    post_process_runtime_dir(dirs, executables, symlinks, max_workers=max_check_workers)
+    all_executables = [
+        runtime_dir / relative_path
+        for relative_path, data in manifest.get("files", {}).items()
+        if data.get("type") == "file" and data.get("executable", False)
+    ]
 
-    return
+    post_process_runtime_dir(
+        dirs,
+        all_executables,
+        symlinks,
+        max_workers=max_check_workers,
+    )

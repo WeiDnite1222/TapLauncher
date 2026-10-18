@@ -138,6 +138,7 @@ class LauncherMainWindow(QMainWindow):
 
         # Dialog
         self.download_dialog = ProgressDialog(self)
+        self.download_dialog.setWindowTitle(self.app.tr_text("Downloads"))
 
         # Homepage
         self.home_page = QWidget()
@@ -394,6 +395,17 @@ class LauncherMainWindow(QMainWindow):
     def show_info(self, widget):
         messagebox.info(self, self.app.tr_text("Info"), message=widget)
 
+    @Slot(dict)
+    def show_plain_error_text(self, data):
+        message = data.get("message")
+        content = data.get("content")
+        messagebox.error_with_plain_text(
+            self,
+            self.app.tr_text("Error"),
+            message=message,
+            content=content,
+        )
+
     def set_current_page(self, page: QWidget, related_button: QToolButton):
         self.central.setCurrentWidget(page)
         related_button.setFocus()
@@ -435,6 +447,11 @@ class LauncherMainWindow(QMainWindow):
 
         widget_signal.show_info_message.connect(
             self.show_info,
+            Qt.ConnectionType.QueuedConnection,
+        )
+
+        widget_signal.show_plain_error_text.connect(
+            self.show_plain_error_text,
             Qt.ConnectionType.QueuedConnection,
         )
 

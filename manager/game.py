@@ -582,11 +582,15 @@ class JavaManager:
         return int(match.group(1)) if match else None
 
     def list_installable_runtimes(self) -> list[InstallableJavaRuntime]:
-        """Return Mojang components with the Java version carried by each one."""
+        """
+        Return Mojang components with the Java version carried by each one.
+        """
         manifest = fetch_runtime_manifest()
         platform_key = get_current_platform_runtime_key()
+
         if not platform_key:
             return []
+
         platform_runtimes = manifest.get(platform_key, {})
         result = []
         for component, versions in platform_runtimes.items():
@@ -601,10 +605,13 @@ class JavaManager:
                 raw_version=raw_version,
                 released=version.get("released"),
             ))
+
         return sorted(result, key=lambda item: (item.major_version or -1, item.component), reverse=True)
 
     def list_installable_components(self) -> list[str]:
-        """Compatibility API returning component names only."""
+        """
+        Compatibility API returning component names only.
+        """
         return [runtime.component for runtime in self.list_installable_runtimes()]
 
     def unregister_runtime(self, runtime_id: str) -> bool:
@@ -646,6 +653,23 @@ class JavaManager:
             self.refresh_runtimes()
         return list(self.runtimes)
 
+    @staticmethod
+    def check_runtimes(runtimes: list[JavaRuntime]) -> list[JavaRuntime]:
+        """
+        Check runtimes
+        :return:
+            error_runtimes: list[JavaRuntime]
+        """
+        errors = []
+
+        for runtime in runtimes:
+            executable = runtime.executable
+
+            if not executable.exists():
+                errors.append(runtime)
+
+        return errors
+
     def resolve_runtime(self, *, manifest: dict | None = None, major_version: int | None = None,
                         preferred_runtime_id: str | None = None) -> JavaRuntime | None:
         java_requirement = (manifest or {}).get("javaVersion", {})
@@ -655,7 +679,16 @@ class JavaManager:
             return None
 
         runtimes = self.list_runtimes()
-        if not runtimes:
+        errors = self.check_runtimes(runtimes)
+        if not runtimes or errors:
+            if errors:
+                self.widget_mgr.signal.show_plain_error_text.emit(
+                    {
+                        "message": "Some runtimes are no longer available after last check.",
+                        "content": "\n".join(f"{runtime.id} ({runtime.major_version}): {runtime.executable} > {runtime.home_dir}" for runtime in errors),
+                    }
+                )
+
             runtimes, _ = self.refresh_runtimes()
 
         if preferred_runtime_id:
@@ -679,10 +712,13 @@ class JavaManager:
             progress_callback=progress_callback,
             redownload_callback=redownload_callback,
         )
+
         executable_name = "java.exe" if sys.platform == "win32" else "java"
         candidates = sorted(destination.rglob(executable_name))
+
         if not candidates:
             raise JavaRuntimeException(f"Installed runtime has no {executable_name}: {destination}")
+
         runtime = self.inspect_runtime(candidates[0], source="managed", component=component)
         self.runtimes = [item for item in self.runtimes if item.executable.resolve() != runtime.executable.resolve()]
         self.runtimes.append(runtime)
@@ -1142,6 +1178,7 @@ class LaunchManager:
                 classpath=classpath,
                 classpath_separator=os.pathsep,
                 library_directory=libraries_dir.as_posix(),
+                resolution=profile.resolution,
             )
 
             target_args = arguments if arguments else old_args
@@ -1219,11 +1256,22 @@ class LaunchManager:
             self.app.logger.debug(f"Java executable path is: {java_path}")
 
             # Finally, generate launch command
+            if not main_class:
+                return result.fail(
+                    "Main class does not exist in manifest."
+                )
+
+            features = {
+                "has_custom_resolution": profile.resolution is not None,
+            }
+
             cmd = generate_launch_command(
                 arg_maps=arg_maps,
                 main_class=main_class,
                 java_path=java_path,
-                full_args=target_args
+                full_args=target_args,
+                features=features,
+                user_jvm_args=profile.java_args
             )
 
             safe_cmd = ["<access token>" if value == launch_account.access_token else value for value in cmd]

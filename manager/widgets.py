@@ -54,6 +54,7 @@ class WidgetManager(QObject):
         show_and_print_error_message = Signal(dict)
         show_warning_message = Signal(str)
         show_info_message = Signal(str)
+        show_plain_error_text = Signal(dict)
         enable_widget = Signal(object)
         disable_widget = Signal(object)
         askyesno = Signal(object)

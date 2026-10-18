@@ -160,6 +160,12 @@ class FileObject:
     def exists(self):
         return self.__path.exists()
 
+    def invalidate_hash_cache(self):
+        self.__sha1 = None
+        self.__sha256 = None
+        self.__sha512 = None
+        self.__md5 = None
+
 
 def download_file(file: FileObject, overwrite=True, progress_callback: Callable[int]=None) -> FileObject | Exception:
     """
@@ -180,6 +186,7 @@ def download_file(file: FileObject, overwrite=True, progress_callback: Callable[
 
     logger.debug("Downloading file {} to {}".format(file.url, file))
 
+    file.invalidate_hash_cache() # Clean cache hash
     try:
         with requests.get(file.url, stream=True) as r:
             r.raise_for_status()
@@ -203,6 +210,8 @@ def download_file(file: FileObject, overwrite=True, progress_callback: Callable[
         raise DownloadException(
             "An error occurred while downloading file {}. {}".format(file.url, e)
         )
+    finally:
+        file.invalidate_hash_cache()
 
     if file.expected_sha256 and not file.verify_sha256():
         raise HashMismatchException("sha256", file.sha256, file.expected_sha256, file.posix_path)

@@ -1,9 +1,10 @@
 import logging
 import re
 import zipfile
-from pathlib import Path
+from pathlib import Path, PureWindowsPath
 from typing import Callable
 
+from .argument import convert_argument_to_multiple_string, find_game_and_jvm_args, is_argument_allowed
 from .library import get_natives_platform_info, is_library_allowed, generate_formatted_artifact_with_name, \
     is_native_allowed, is_legacy_native_allowed, remove_duplicate_artifacts
 from .libraryx import normalize_library_to_common_struct
@@ -64,6 +65,47 @@ def collect_library_artifacts(specific_version_manifest):
 
     return items
 
+def locate_natives_extract_dir(jvm_args: list[str | dict], default_extract_dir: Path,
+                               features: dict | None = None) -> Path:
+    property_prefix = "-Djava.library.path="
+    placeholder = "${natives_directory}"
+
+    path_value = None
+    for argument in jvm_args:
+        if not is_argument_allowed(argument, allow_features=features):
+            continue
+        for arg in convert_argument_to_multiple_string(argument):
+            if arg.startswith(property_prefix):
+                path_value = arg[len(property_prefix):]
+
+    if path_value is None or path_value == placeholder:
+        return default_extract_dir
+
+    if not path_value.startswith(placeholder + "/") and not path_value.startswith(placeholder + "\\"):
+        raise ValueError("Unsupported java.library.path extraction layout")
+
+    suffix = path_value[len(placeholder) + 1:].replace("\\", "/")
+    parts = suffix.split("/")
+
+    if (
+        any(part in ("", ".", "..") for part in parts)
+        or any(char in suffix for char in ":;${}")
+        or PureWindowsPath(suffix).drive
+    ):
+        raise ValueError("Invalid native extraction subdirectory")
+
+    root = default_extract_dir.resolve()
+    destination = root.joinpath(*parts).resolve()
+
+    if not destination.is_relative_to(root):
+        raise ValueError("Native extraction directory escapes its root")
+
+    return destination
+
+def locate_natives_extract_dir_by_manifest(manifest: dict, default_extract_dir: Path,
+                                           features: dict | None = None) -> Path:
+    _, jvm = find_game_and_jvm_args(manifest.get("arguments") or {})
+    return locate_natives_extract_dir(jvm, default_extract_dir, features=features)
 
 def collect_native_artifacts(specific_version_manifest):
     """
@@ -344,7 +386,9 @@ def check_libraries_exists(manifest: dict, libraries_dir: Path):
     return not_found
 
 
-def check_natives_exists(manifest: dict, libraries_dir: Path, natives_dir: Path):
+def check_natives_exists(manifest: dict, libraries_dir: Path, natives_dir: Path, *,
+                         features: dict | None = None):
+    extract_dir = locate_natives_extract_dir_by_manifest(manifest, natives_dir, features=features)
     filtered = []
 
     # Convert current platform and architecture type to same formula
@@ -464,17 +508,19 @@ def check_natives_exists(manifest: dict, libraries_dir: Path, natives_dir: Path)
         return False
 
     for target in expected:
-        if not (natives_dir / target).exists():
+        if not (extract_dir / target).is_file():
             return False
 
     return True
 
 
-def check_full_libraries_exists(manifest: dict, libraries_dir: Path, natives_dir: Path) -> bool:
+def check_full_libraries_exists(manifest: dict, libraries_dir: Path, natives_dir: Path, *,
+                                features: dict | None = None) -> bool:
     natives_exist = check_natives_exists(
         manifest,
         libraries_dir,
         natives_dir,
+        features=features,
     )
     missing_libraries = check_libraries_exists(
         manifest,
@@ -555,10 +601,12 @@ def generate_classpath(manifest: dict, libraries_dir: Path, core_file_path: Path
     return f"{separator}".join(classes)
 
 
-def download_full_libraries(manifest: dict, libraries_dir: Path, natives_dir: Path,
+def download_full_libraries(manifest: dict, libraries_dir: Path, default_natives_dir: Path,
                             progress_callback: Callable[[str, float], None] = None,
                             redownload_callback: Callable[
-                                [list[FileObject]], tuple[bool, list[FileObject]]] = None) -> None:
+                                [list[FileObject]], tuple[bool, list[FileObject]]] = None, *,
+                            features: dict | None = None) -> None:
+    natives_dir = locate_natives_extract_dir_by_manifest(manifest, default_natives_dir, features=features)
     # libraries
     libraries = collect_library_artifacts(manifest)
 

@@ -24,8 +24,8 @@ class LauncherHTTPException(LauncherException):
 class HashMismatchException(Exception):
     def __init__(self, hash_name, got_hash, expected_hash, filepath: str | Path):
         if type(filepath) == Path: filepath = Path(filepath).absolute().as_posix()
-        self.message = "File {} hash mismatch. Expected hash {}. Got hash {} ({})".format(filepath, got_hash,
-                                                                                          expected_hash, hash_name)
+        self.message = "File {} hash mismatch. Expected hash {}. Got hash {} ({})".format(filepath, expected_hash, got_hash,
+                                                                                          hash_name)
         super().__init__(self.message)
 
 class UnsupportedPlatformException(LauncherException):

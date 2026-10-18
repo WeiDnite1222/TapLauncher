@@ -4,10 +4,18 @@ import re
 import shlex
 
 from core_lib.common.common import get_platform_info
+from core_lib.common.exception import LauncherException
 from core_lib.game.library import get_natives_platform_info
 
 logger = logging.getLogger("Launcher.CoreLib")
 
+def compare_versions(left: str, right: str) -> int:
+    left_parts = tuple(map(int, left.split(".")))
+    right_parts = tuple(map(int, right.split(".")))
+    length = max(len(left_parts), len(right_parts))
+    left_parts += (0,) * (length - len(left_parts))
+    right_parts += (0,) * (length - len(right_parts))
+    return (left_parts > right_parts) - (left_parts < right_parts)
 
 def is_argument_allowed(argument: dict | str, allow_features: dict | None = None) -> bool:
     """
@@ -44,6 +52,7 @@ def is_argument_allowed(argument: dict | str, allow_features: dict | None = None
         feature_rule = rule.get("features") or {}
         rule_arch = os_rule.get("arch")
         rule_version = os_rule.get("version")
+        rule_version_range = os_rule.get("versionRange")
 
         # Check platform
         if rule_os is not None and platform_rule_name != rule_os:
@@ -69,6 +78,18 @@ def is_argument_allowed(argument: dict | str, allow_features: dict | None = None
                 )
                 continue
 
+        # Check version range
+        if rule_version_range is not None:
+            min_value = rule_version_range.get("min")
+            max_value = rule_version_range.get("max")
+
+            try:
+                if min_value is not None and compare_versions(platform_version, min_value) < 0:
+                    continue
+                if max_value is not None and compare_versions(platform_version, max_value) > 0:
+                    continue
+            except ValueError:
+                raise LauncherException("Unable to compare versions: SYS_VER: {} MIN: {} MAX: {}".format(platform_version, min_value, max_value))
 
         # Check feature rule
         if any(allow_features.get(key, False) != expected for key, expected in feature_rule.items()):
@@ -98,7 +119,8 @@ class ArgumentMappings:
                  auth_access_token="", clientid=None, auth_xuid=None,
                  user_type=None, user_properties=None, version_type=None, natives_directory=None,
                  launcher_name=None, launcher_version=None,
-                 classpath=None, classpath_separator=None, library_directory=None):
+                 classpath=None, classpath_separator=None, library_directory=None,
+                 resolution: tuple[int, int] | None = None):
         self.player_name = player_name
         self.version_name = version_name
         self.game_directory = game_directory
@@ -111,6 +133,7 @@ class ArgumentMappings:
         self.auth_xuid = auth_xuid
         self.user_type = user_type
         self.user_properties = user_properties
+        self.resolution = resolution
         if isinstance(user_properties, dict):
             self.user_properties = json.dumps(
                 user_properties,
@@ -194,24 +217,8 @@ def find_game_and_jvm_args(arguments: dict | str) -> tuple[list, list]:
     return game_args, jvm_args
 
 
-REMAPPING_ARGUMENTS = {
-    # For some (I don't know) reason, in 26.2, Mojang include some
-    "-Djava.library.path=${natives_directory}/java": "-Djava.library.path=${natives_directory}"
-}
-
-
-def hard_remapping_special_arguments(argument: str) -> str:
-    for arg in REMAPPING_ARGUMENTS:
-        new_value = REMAPPING_ARGUMENTS[arg]
-
-        if arg == argument:
-            return new_value
-
-    return argument
-
-
 def parse_and_generate_arguments(arguments: list | str, mappings: ArgumentMappings, features: dict | None = None) -> \
-list[str]:
+    list[str]:
     if features is None:
         features = {}
 
@@ -228,13 +235,8 @@ list[str]:
         if not is_argument_allowed(argument, allow_features=features):
             continue
 
-        # Replace some special arguments
-        new_argument = hard_remapping_special_arguments(argument)
-
         # Each argument (section) may contain multiple items, convert it to list before replace placeholder
-        converted = convert_argument_to_multiple_string(new_argument)
-
-        for item in converted:
+        for item in convert_argument_to_multiple_string(argument):
             parsed = replace_placeholders(item, placeholders)
             parsed_arguments.append(parsed)
 
@@ -263,24 +265,59 @@ def append_missing_necessary_jvm_arguments(arguments: list, arg_maps: ArgumentMa
 
     return result
 
+def add_feature_arguments(arguments: dict, arg_maps: ArgumentMappings, features: dict | None = None) -> list[str]:
+    result = []
+
+    if features is None:
+        return result
+
+    if features.get("has_custom_resolution"):
+        result.append(f"-Dminecraft.overrideResolution={features['resolution']}")
+
+    return result
 
 def generate_launch_command(arg_maps: ArgumentMappings, main_class: str, java_path: str, full_args: dict | str
-                            , features: dict | None = None) -> list[str]:
+                            , features: dict | None = None, user_jvm_args: list[str] | None | str = None) -> list[str]:
     cmd = [java_path]
     game_args, jvm_args = find_game_and_jvm_args(full_args)
-    parsed_jvm_args = parse_and_generate_arguments(
+
+    if isinstance(user_jvm_args, str):
+        user_jvm_args = shlex.split(user_jvm_args)
+
+    if user_jvm_args is None:
+        # Use manifest recommended user jvm arguments
+        default_args = (
+            full_args.get("default-user-jvm", [])
+            if isinstance(full_args, dict)
+            else []
+        )
+
+        parsed_user_jvm_args = parse_and_generate_arguments(
+            default_args,
+            arg_maps,
+            features=features,
+        )
+    else:
+        # Use jvm arguments that provided by user
+        parsed_user_jvm_args = list(user_jvm_args)
+
+    parsed_manifest_jvm_args = parse_and_generate_arguments(
         jvm_args,
         arg_maps,
-        features=features
+        features=features,
     )
+
     parsed_game_args = parse_and_generate_arguments(
         game_args,
         arg_maps,
-        features=features
+        features=features,
     )
 
     # Legacy Minecraft don't have jvm arguments exist in the version library. We need to generate by ourselves
-    parsed_jvm_args = append_missing_necessary_jvm_arguments(parsed_jvm_args, arg_maps)
+    parsed_jvm_args = append_missing_necessary_jvm_arguments(
+        parsed_user_jvm_args + parsed_manifest_jvm_args, # Combine manifest and user jvm arguments together
+        arg_maps,
+    )
 
     cmd.extend(parsed_jvm_args)
     cmd.append(main_class)
