@@ -139,3 +139,9 @@ class ConfigValidationError(SettingsError):
             f"[{section}]\n{error}" for section, error in self.errors.items()
         )
         super().__init__(f"Invalid settings configuration:\n{details}")
+
+class ArgumentError(LauncherException):
+    user_message = "An error occurred while parsing arguments."
+
+class ArgumentValueError(ArgumentError):
+    user_message = "An invalid argument value was provided."

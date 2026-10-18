@@ -29,6 +29,11 @@ QPushButton#manageProfileItem:checked {
     color: palette(highlighted-text);
 }
 
+QPushButton#manageProfileItem QLabel[itemChecked="true"] {
+    color: palette(highlighted-text);
+    background: transparent;
+}
+
 QLabel#itemName { font-size: 15px; font-weight: 600; }
 
 QFrame#profileEditor { background: transparent; }

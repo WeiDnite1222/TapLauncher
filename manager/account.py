@@ -38,7 +38,7 @@ from core_lib.game.account import (
 )
 from core_lib.game.authentication import get_xbox_token_and_user_hash, get_microsoft_token, get_xsts_token, \
     get_minecraft_access_token, get_account_entitlements, get_minecraft_profile, has_minecraft_license, \
-    get_device_code, refresh_microsoft_token, is_access_token_valid
+    get_device_code, refresh_microsoft_token, is_access_token_valid, get_xbox_xuid
 from core_lib.game.third_party import get_minecraft_head
 from core_lib.qt.hack import data_url_to_qt_image
 from manager.settings_models import AccountSettings
@@ -65,6 +65,7 @@ class AccountDetail(AccountSummary):
     access_token_expires_at: str | datetime.datetime
     refresh_token_expires_at: str | datetime.datetime
     user_properties: list
+    xuid: str | None = None
 
 
 @dataclass(frozen=True)
@@ -80,6 +81,7 @@ class CreateAccountRequest:
     avatar: str = ""
     account_type: str = "msa"
     user_properties: list = field(default_factory=list)
+    xuid: str | None = None
 
 
 class _AccountUnsetType:
@@ -106,6 +108,7 @@ class UpdateAccountRequest:
     avatar: str | None = None
     account_type: str | None = None
     user_properties: list | _AccountUnsetType = _UNSET
+    xuid: str | None = None
 
 
 @dataclass(frozen=True)
@@ -116,6 +119,7 @@ class LaunchAccount:
     access_token: str = field(repr=False)
     user_type: str = "msa"
     user_properties: list = field(default_factory=list)
+    xuid: str | None = None
 
 
 @dataclass(frozen=True)
@@ -409,6 +413,7 @@ class AccountManager(QObject):
             access_token_expires_at=account.access_token_expires_at,
             refresh_token_expires_at=account.refresh_token_expires_at,
             user_properties=copy.deepcopy(account.user_properties),
+            xuid=account.xuid,
         )
 
     def contains(self, account_id: str, show_error: bool = False) -> bool:
@@ -474,6 +479,7 @@ class AccountManager(QObject):
                 avatar=request.avatar,
                 type=request.account_type,
                 user_properties=copy.deepcopy(request.user_properties),
+                xuid=request.xuid,
             )
 
             # Check before actually update
@@ -525,6 +531,7 @@ class AccountManager(QObject):
                 "refresh_token_expires_at": "refreshTokenExpiresAt",
                 "avatar": "avatar",
                 "account_type": "type",
+                "xuid": "xuid",
             }
 
             # Replace value inside the account raw data to new value (from UpdateAccountRequest)
@@ -699,6 +706,7 @@ class AccountManager(QObject):
             access_token=access_token,
             user_type=account.account_type,
             user_properties=copy.deepcopy(account.user_properties),
+            xuid=account.xuid,
         )
 
     # Validation
@@ -1165,6 +1173,7 @@ class AccountManager(QObject):
                 refresh_token=result["refresh_token"],
                 access_token_expires_at=result["access_token_expires_at"],
                 refresh_token_expires_at=result["refresh_token_expires_at"],
+                xuid=result.get("xuid"),
             ),
         )
         if updated and self.save():
@@ -1259,6 +1268,7 @@ class AccountManager(QObject):
             minecraft_uuid=account_id, # account_id's value is provided account's uuid
             minecraft_name=account.get("name", ""),
             account_type="msa",
+            xuid=account.get("xuid"),
         )
 
         if self.contains(account_id):
@@ -1273,6 +1283,7 @@ class AccountManager(QObject):
                     minecraft_uuid=request.minecraft_uuid,
                     minecraft_name=request.minecraft_name,
                     account_type=request.account_type,
+                    xuid=request.xuid,
                 ),
             )
             if not updated:
@@ -1550,7 +1561,8 @@ class LoginWorker(QObject):
             xbox_token, user_hash, _ = get_xbox_token_and_user_hash(microsoft_access_token)
 
             self.progress_changed.emit(65, "Getting XSTS token...", False)
-            xsts_token, _ = get_xsts_token(xbox_token)
+            xsts_token, xsts_data = get_xsts_token(xbox_token)
+            xuid = get_xbox_xuid(xbox_token, user_hash, xsts_data)
 
             self.progress_changed.emit(75, "Getting minecraft access token...", False)
             minecraft_access_token, minecraft = get_minecraft_access_token(user_hash, xsts_token)
@@ -1579,6 +1591,7 @@ class LoginWorker(QObject):
                 # Microsoft does not provide a refresh-token expiry timestamp.
                 "refresh_token_expires_at": now + datetime.timedelta(days=90),
                 "has_license": has_minecraft_license(entitlements),
+                "xuid": xuid,
             })
             self.progress_changed.emit(100, "Finished!", True)
         except InterruptedError:
@@ -1616,7 +1629,8 @@ class TokenRefreshWorker(QObject):
                 self.client_id, self.refresh_token
             )
             xbox_token, user_hash, _ = get_xbox_token_and_user_hash(microsoft_token)
-            xsts_token, _ = get_xsts_token(xbox_token)
+            xsts_token, xsts_data = get_xsts_token(xbox_token)
+            xuid = get_xbox_xuid(xbox_token, user_hash, xsts_data)
             minecraft_token, minecraft = get_minecraft_access_token(user_hash, xsts_token)
 
             now = datetime.datetime.now(datetime.timezone.utc)
@@ -1630,6 +1644,7 @@ class TokenRefreshWorker(QObject):
                 refresh_expires_in = 90 * 86400
 
             self.succeeded.emit(self.account_id, {
+                "xuid": xuid,
                 "access_token": minecraft_token,
                 "refresh_token": refresh_token,
                 "access_token_expires_at": now + datetime.timedelta(seconds=expires_in),

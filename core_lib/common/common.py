@@ -101,7 +101,7 @@ class FileObject:
         return self.sha512 == expected_hash if expected_hash else self.expected_sha512 == self.sha512
 
     def verify_md5(self, expected_hash=None):
-        return self.sha1 == expected_hash if expected_hash else self.expected_sha1 == self.sha1
+        return self.md5 == expected_hash if expected_hash else self.expected_sha1 == self.md5
 
     def verify(self, algorithm, expected_hash=None):
         if algorithm == "sha1":
@@ -219,6 +219,8 @@ def download_file(file: FileObject, overwrite=True, progress_callback: Callable[
         raise HashMismatchException("sha1", file.sha1, file.expected_sha1, file.posix_path)
     elif file.expected_md5 and not file.verify_md5():
         raise HashMismatchException("md5", file.md5, file.expected_md5, file.posix_path)
+    elif file.expected_sha512 and not file.verify_sha512():
+        raise HashMismatchException("sha512", file.sha512, file.expected_sha512, file.posix_path)
 
     if any([file.expected_sha1, file.expected_md5, file.expected_sha256]):
         logger.debug("File hash is match as the expected hash.")

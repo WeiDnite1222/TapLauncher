@@ -1,0 +1,27 @@
+QFrame#profileButton {
+    background: #c0c0c0;
+    border: 2px outset #c0c0c0;
+    border-radius: 0;
+}
+QFrame#profileButton:hover { background: #dfdfdf; }
+QLabel#profileName, QLabel#itemName { color: #000000; font-size: 14px; font-weight: bold; }
+QLabel#profileVersion, QLabel#itemVersion { color: #404040; font-size: 12px; }
+QLabel#profileArrow { background: transparent; font-size: 18px; }
+QLabel#launchStatus { font-size: 12px; font-weight: bold; }
+QFrame#profilePopup { background: #c0c0c0; border: 2px outset #c0c0c0; border-radius: 0; }
+QWidget#profileListContent { background: #c0c0c0; }
+QPushButton#profileItem {
+    /* Override the generic button sizing; 60px + 2px border = 62px. */
+    min-height: 60px;
+    padding: 0;
+    background: #c0c0c0;
+    border: 2px outset #c0c0c0;
+    border-radius: 0;
+    text-align: left;
+}
+QPushButton#profileItem:hover { background: #000080; }
+QPushButton#profileItem QLabel[itemHovered="true"] { color: #ffffff; background: transparent; }
+QPushButton#launchButton { min-width: 150px; font-size: 14px; font-weight: bold; }
+QFrame#profileFrame { background: #008080; border: 2px inset #c0c0c0; border-radius: 0; }
+QFrame#header { background: #000080; border: 0; }
+QLabel#headerLabel { color: #ffffff; background: transparent; font-size: 18px; font-weight: bold; }

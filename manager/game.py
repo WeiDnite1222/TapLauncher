@@ -1170,6 +1170,7 @@ class LaunchManager:
                 auth_uuid=launch_account.minecraft_uuid,
                 auth_access_token=launch_account.access_token,
                 clientid=CLIENT_ID,
+                auth_xuid=launch_account.xuid,
                 user_type=launch_account.user_type,
                 version_type=profile.version_type,
                 natives_directory=natives_dir.as_posix(),
@@ -1178,7 +1179,7 @@ class LaunchManager:
                 classpath=classpath,
                 classpath_separator=os.pathsep,
                 library_directory=libraries_dir.as_posix(),
-                resolution=profile.resolution,
+                resolution=profile.resolution
             )
 
             target_args = arguments if arguments else old_args
@@ -1271,7 +1272,8 @@ class LaunchManager:
                 java_path=java_path,
                 full_args=target_args,
                 features=features,
-                user_jvm_args=profile.java_args
+                user_jvm_args=profile.java_args,
+                strict_placeholders=False,
             )
 
             safe_cmd = ["<access token>" if value == launch_account.access_token else value for value in cmd]

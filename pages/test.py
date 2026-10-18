@@ -1,7 +1,6 @@
 import json
 import subprocess
 import sys
-import textwrap
 import threading
 import traceback
 from pathlib import Path
@@ -10,6 +9,7 @@ from PySide6.QtCore import Qt, QObject, Signal, Slot
 from PySide6.QtWidgets import QPushButton, QVBoxLayout, QPlainTextEdit, \
     QHBoxLayout, QComboBox, QWidget
 
+from constant import CLIENT_ID
 from core_lib.common.common import FileObject, download_multiple_files
 from core_lib.common.exception import VersionNotSelectedException, UnsupportedPlatformException, \
     NativeResolveException, DownloadException, DependencyException, AssetManifestFetchException, \
@@ -106,12 +106,7 @@ class TestPage(QWidget):
 
         self.setLayout(self.layout)
 
-        self.setStyleSheet(
-            textwrap.dedent("""
-            QPushButton#ActionButton {
-                padding: 6px 12px;
-            }          
-            """))
+        self.app.apply_qss(Path("test.qss"), self.setStyleSheet)
 
         self.signals = self.PageSignals(self)
 
@@ -663,11 +658,13 @@ class TestPage(QWidget):
             game_args, jvm_args = find_game_and_jvm_args(target_args)
             parsed_jvm_args = parse_and_generate_arguments(
                 jvm_args,
-                arg_maps
+                arg_maps,
+                strict_placeholders=False,
             )
             parsed_game_args = parse_and_generate_arguments(
                 game_args,
-                arg_maps
+                arg_maps,
+                strict_placeholders=False,
             )
             self.widget_mgr.download_signal.log.emit(f"Parsed jvm arguments: \n{parsed_jvm_args}\n{" ".join(parsed_jvm_args)}")
             self.widget_mgr.download_signal.log.emit(f"Parsed game arguments: \n{parsed_game_args}\n{" ".join(parsed_game_args)}")
@@ -772,6 +769,7 @@ class TestPage(QWidget):
                 classpath=classpath,
                 classpath_separator=";",
                 library_directory=libraries_dir.as_posix(),
+                clientid=CLIENT_ID,
             )
 
             target_args = arguments if arguments else old_args
@@ -818,6 +816,7 @@ class TestPage(QWidget):
                 main_class=main_class,
                 java_path=java_path,
                 full_args=target_args,
+                strict_placeholders=False,
             )
 
             self.widget_mgr.download_signal.log.emit(f"Launch command: {cmd}")

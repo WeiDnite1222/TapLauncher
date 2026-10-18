@@ -12,7 +12,7 @@ except ModuleNotFoundError:  # Python 3.10
 
 from PySide6.QtCore import QSize
 from PySide6.QtGui import QIcon, QPixmap, QPalette, QColor
-from PySide6.QtWidgets import QApplication, QStyle, QToolButton
+from PySide6.QtWidgets import QApplication, QStyle, QToolButton, QWidget
 
 from constant import LAUNCHER_VERSION
 from core_lib.qt.hack import move_window_to_center, is_light_theme, \
@@ -241,6 +241,21 @@ class Launcher(QApplication, LauncherObject):
     def styles_path(self):
         return self.resources_dir / "styles"
 
+    def locate_styles_path(self, relative_path: Path | str) -> Path:
+        appearance = self.settings_manager.get("appearance", AppearanceSettings)
+        theme = getattr(self, "_active_theme", appearance.theme)
+        theme_directory = self._theme_packages().get(theme)
+
+        if not theme_directory:
+            return self.styles_path / relative_path
+
+        full_path = theme_directory / "styles" / relative_path
+
+        if not full_path.is_file():
+            return self.styles_path / relative_path
+
+        return full_path
+
     @property
     def built_in_themes_dir(self) -> Path:
         return self.resources_dir / "themes"
@@ -250,7 +265,8 @@ class Launcher(QApplication, LauncherObject):
         return self.data_dir / "themes"
 
     def apply_qss(self, qss_relative_path: Path, apply_qss_callback: Callable[[str], None]) -> str:
-        full_path = self.styles_path / qss_relative_path
+        full_path = self.locate_styles_path(qss_relative_path)
+
         if not full_path.exists():
             messagebox.error(
                 None,
@@ -260,11 +276,14 @@ class Launcher(QApplication, LauncherObject):
             return ""
 
         try:
-            data = full_path.read_text()
+            data = full_path.read_text(encoding="utf-8")
             apply_qss_callback(data)
+            target = getattr(apply_qss_callback, "__self__", None)
+            if isinstance(target, QWidget):
+                target.setProperty("qssRelativePath", str(qss_relative_path))
         except Exception as e:
             messagebox.error(
-                self.main_window,
+                None,
                 self.tr_text("Resource Error"),
                 self.tr_text(
                     "Unable to apply QSS stylesheet {path}: {error}",
@@ -297,6 +316,7 @@ class Launcher(QApplication, LauncherObject):
             appearance = self.settings_manager.get("appearance", AppearanceSettings)
             theme = appearance.theme
 
+        active_theme = theme
         if theme == "system":
             # Apply system palette
             palette = QPalette(self._system_palette)
@@ -309,6 +329,7 @@ class Launcher(QApplication, LauncherObject):
                     theme,
                 )
                 palette = QPalette(self._system_palette)
+                active_theme = "system"
             else:
                 try:
                     self._read_theme_manifest(directory / "theme.toml")
@@ -321,10 +342,17 @@ class Launcher(QApplication, LauncherObject):
                         error,
                     )
                     palette = QPalette(self._system_palette)
+                    active_theme = "system"
 
+        self._active_theme = active_theme
         self.setPalette(palette)
+        # Application-wide styles also reach parentless dialogs and message boxes.
+        self.apply_qss(Path("main.qss"), self.setStyleSheet)
 
         for widget in self.allWidgets():
+            qss_path = widget.property("qssRelativePath")
+            if qss_path:
+                self.apply_qss(Path(qss_path), widget.setStyleSheet)
             widget.style().unpolish(widget)
             widget.style().polish(widget)
             widget.update()

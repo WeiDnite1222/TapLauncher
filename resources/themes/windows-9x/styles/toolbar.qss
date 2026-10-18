@@ -1,0 +1,29 @@
+QToolBar {
+    background: #c0c0c0;
+    border: 2px outset #c0c0c0;
+    spacing: 3px;
+    padding: 2px;
+}
+QToolBar QToolButton, QToolBar QPushButton {
+    background: #c0c0c0;
+    color: #000000;
+    border: 2px solid;
+    border-top-color: #ffffff;
+    border-left-color: #ffffff;
+    border-bottom-color: #404040;
+    border-right-color: #404040;
+    border-radius: 0;
+    padding: 6px;
+    font-size: 12px;
+}
+QToolBar QToolButton:pressed, QToolBar QToolButton:checked,
+QToolBar QPushButton:pressed, QToolBar QPushButton:checked {
+    border-top-color: #404040;
+    border-left-color: #404040;
+    border-bottom-color: #ffffff;
+    border-right-color: #ffffff;
+}
+QToolBar QToolButton:focus, QToolBar QPushButton:focus { background: #dfdfdf; }
+QToolBar QToolButton:disabled, QToolBar QPushButton:disabled { color: #808080; }
+QToolBar::separator { background: #808080; width: 2px; height: 2px; margin: 3px; }
+QToolBar::handle { background: #c0c0c0; border: 1px outset #ffffff; width: 4px; height: 4px; }

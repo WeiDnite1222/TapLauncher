@@ -3,6 +3,7 @@ import threading
 from collections import deque
 from collections.abc import Callable
 from datetime import datetime
+from pathlib import Path
 
 from PySide6.QtCore import QObject, Signal
 from PySide6.QtGui import QCloseEvent
@@ -79,75 +80,7 @@ class ProcessLogWindow(QMainWindow):
         layout.addWidget(self.log_output)
         self.setCentralWidget(container)
 
-        self.setStyleSheet(
-            """
-            QMainWindow {
-                spacing: 0;
-            }
-            
-            QPlainTextEdit {
-                background-color: #0f0f10;
-                color: "#e5e5e5";
-                font-family: Consolas;
-                font-size: 10pt;
-            }
-            
-            QScrollBar:vertical {
-                background-color: #0f0f10;
-                width: 5px;
-                margin: 0;
-            }
-            
-            QScrollBar::handle:vertical {
-                background-color: #3a3a3a;
-                min-height: 24px;
-                border-radius: 5px;
-            }
-            
-            QScrollBar::handle:vertical:hover {
-                background-color: #4a4a4a;
-            }
-            
-            QScrollBar::add-line:vertical,
-            QScrollBar::sub-line:vertical {
-                height: 0;
-            }
-            
-            QScrollBar::add-page:vertical,
-            QScrollBar::sub-page:vertical {
-                background: none;
-            }
-            
-            
-            /* Horizontal scrollbar */
-            
-            QScrollBar:horizontal {
-                background-color: #0f0f10;
-                height: 5px;
-                margin: 0;
-            }
-            
-            QScrollBar::handle:horizontal {
-                background-color: #3a3a3a;
-                min-width: 24px;
-                border-radius: 5px;
-            }
-            
-            QScrollBar::handle:horizontal:hover {
-                background-color: #4a4a4a;
-            }
-            
-            QScrollBar::add-line:horizontal,
-            QScrollBar::sub-line:horizontal {
-                width: 0;
-            }
-            
-            QScrollBar::add-page:horizontal,
-            QScrollBar::sub-page:horizontal {
-                background: none;
-            }
-            """
-        )
+        self.app.apply_qss(Path("process_log.qss"), self.setStyleSheet)
 
         self._signals.output.connect(self._append_output)
         self._signals.finished.connect(self._process_finished)

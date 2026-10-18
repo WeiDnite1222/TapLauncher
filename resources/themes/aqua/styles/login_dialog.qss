@@ -1,0 +1,7 @@
+QDialog { background: #f1f3f7; }
+QLabel#dialogTitle { color: #203653; font-size: 18px; font-weight: bold; }
+QLabel#helpText { color: #20252d; font-size: 13px; }
+QLineEdit#codeEdit { min-height: 50px; padding: 0 12px; border: 1px solid #829ab9; border-radius: 8px; background: #ffffff; color: #203653; font-size: 25px; font-weight: bold; letter-spacing: 2px; }
+QLabel#errorMessage { padding: 9px 11px; border: 1px solid #dfb8bd; border-radius: 6px; background: #fff0f2; color: #a52b38; font-size: 12px; }
+QPushButton { min-height: 30px; padding: 3px 14px; border: 1px solid #8293ac; border-radius: 14px; color: #17263d; background: qlineargradient(x1:0,y1:0,x2:0,y2:1,stop:0 #ffffff,stop:0.45 #edf2fa,stop:0.5 #ced9e9,stop:1 #f8fbff); }
+QPushButton:pressed { background: #a2c9f4; }

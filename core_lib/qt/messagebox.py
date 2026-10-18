@@ -6,6 +6,7 @@ def create_messagebox(parent: QWidget | None, title: str, message: str,
                       icon: QMessageBox.Icon = QMessageBox.Icon.Information,
                       button: QMessageBox.StandardButton = QMessageBox.StandardButton.Ok) -> QMessageBox:
     msg = QMessageBox(parent)
+    msg.setOption(QMessageBox.Option.DontUseNativeDialog, True)
     msg.setWindowTitle(title)
     msg.setText(message)
     msg.setIcon(icon)

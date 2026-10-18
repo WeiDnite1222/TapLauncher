@@ -1,0 +1,3 @@
+QProgressBar[failed="true"]::chunk {
+    background-color: #c62828;
+}

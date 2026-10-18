@@ -48,6 +48,7 @@ class Account:
     avatar: str = ""
     type: str = "msa"
     user_properties: list = field(default_factory=list)
+    xuid: str | None = None
 
 
 def _datetime_string(value: str | datetime.datetime, field_name: str) -> str:
@@ -83,6 +84,7 @@ def create_account_data_from_object(account: Account) -> dict:
         "type": account.type,
         "userProperties": deepcopy(account.user_properties),
         "username": account.username,
+        "xuid": account.xuid,
     }
 
 SUPPORT_DATA_URL_IMAGE_TYPE = [
@@ -427,6 +429,7 @@ def convert_account_data_to_object(accounts: dict, account_id: str) -> Account:
         avatar=data.get("avatar", ""),
         type=data.get("type", "msa"),
         user_properties=deepcopy(data.get("userProperties", [])),
+        xuid=data.get("xuid"),
     )
 
 

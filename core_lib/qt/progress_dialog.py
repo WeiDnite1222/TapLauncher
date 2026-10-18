@@ -155,9 +155,10 @@ class ProgressDialog(QDialog):
             row = self.rows[task_id]
 
         row.status_label.setText(f"Failed: {error}")
-        row.progress_bar.setStyleSheet(
-            "QProgressBar::chunk { background-color: #c62828; }"
-        )
+        row.progress_bar.setProperty("failed", True)
+        row.progress_bar.style().unpolish(row.progress_bar)
+        row.progress_bar.style().polish(row.progress_bar)
+        row.progress_bar.update()
         # Move to top
         self.download_layout.removeWidget(row)
         self.download_layout.insertWidget(0, row)

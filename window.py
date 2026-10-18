@@ -138,6 +138,7 @@ class LauncherMainWindow(QMainWindow):
 
         # Dialog
         self.download_dialog = ProgressDialog(self)
+        self.app.apply_qss(Path("progress_dialog.qss"), self.download_dialog.setStyleSheet)
         self.download_dialog.setWindowTitle(self.app.tr_text("Downloads"))
 
         # Homepage
@@ -191,7 +192,6 @@ class LauncherMainWindow(QMainWindow):
         self.setCentralWidget(self.central)
 
         # Apply qss
-        self.app.apply_qss(Path("main.qss"), self.setStyleSheet)
         self.app.apply_qss(Path("toolbar.qss"), self.toolbar.setStyleSheet)
 
         # Toolbar

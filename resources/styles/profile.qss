@@ -21,6 +21,13 @@ QLabel#profileVersion, QLabel#itemVersion {
 
 QLabel#profileArrow {
     font-size: 18px;
+    border-style: solid;
+    background-color: transparent;
+}
+
+QLabel#launchStatus {
+    font-size: 12px;
+    font-weight: 600;
 }
 QFrame#profilePopup {
 /*    background: palette(mid);*/
@@ -38,6 +45,11 @@ QPushButton#profileItem {
 QPushButton#profileItem:hover {
     background: palette(highlight);
     color: palette(highlighted-text);
+}
+
+QPushButton#profileItem QLabel[itemHovered="true"] {
+    color: palette(highlighted-text);
+    background: transparent;
 }
 
 QPushButton#launchButton {

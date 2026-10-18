@@ -1,0 +1,24 @@
+QLabel#manageTitle { font-size: 20px; font-weight: bold; padding: 4px; }
+QScrollArea#manageProfileListScroll, QScrollArea#manageProfileOptionsScroll {
+    background: #ffffff;
+    border: 2px inset #c0c0c0;
+    border-radius: 0;
+}
+QPushButton#manageProfileItem {
+    /* Override the generic button sizing; 62px + 2px border = 64px. */
+    min-height: 62px;
+    padding: 0;
+    background: #c0c0c0;
+    color: #000000;
+    border: 1px solid transparent;
+    border-radius: 0;
+    text-align: left;
+}
+QPushButton#manageProfileItem:hover { background: #dfdfdf; }
+QPushButton#manageProfileItem:checked { background: #000080; color: #ffffff; }
+QPushButton#manageProfileItem QLabel[itemChecked="true"] { color: #ffffff; background: transparent; }
+QLabel#itemName { font-size: 14px; font-weight: bold; }
+QLabel#itemVersion { color: #404040; font-size: 12px; }
+QFrame#profileEditor { background: #c0c0c0; }
+QPushButton#saveProfileButton { min-width: 130px; font-weight: bold; }
+QPushButton#dangerButton { color: #800000; }

@@ -16,6 +16,7 @@ from PySide6.QtWidgets import (
 )
 
 from constant import LAUNCHER_DESCRIPTION, LAUNCHER_NAME, LAUNCHER_VERSION
+from core_lib.qt import messagebox
 from manager.settings_models import AccountSettings, AppearanceSettings, GeneralSettings
 
 LANGUAGE_LABELS = {
@@ -403,6 +404,7 @@ class SettingsPage(QWidget):
             self.client_id_edit.selectAll()
             return False
 
+        old_theme = self.settings.get("appearance", AppearanceSettings).theme
         data = {
             "general": {"language": self.language_combo.currentData()},
             "appearance": {"theme": self.theme_combo.currentData()},
@@ -410,7 +412,7 @@ class SettingsPage(QWidget):
                         "credentials_save_method": selected_credentials_method,
                         "token_refresh_interval":
                             current_token_refresh_interval
-                        },
+                        }
         }
         try:
             self.settings.validate(data)
@@ -455,6 +457,11 @@ class SettingsPage(QWidget):
             if show_error:
                 QMessageBox.critical(self, self.app.tr_text("Settings error"), str(error))
             return False
+
+        if old_theme !=self.settings.get("appearance", AppearanceSettings).theme:
+            messagebox.info(None, "Launcher",
+                            self.app.tr_text("To make all page apply new theme."
+                                         " Is recommend to restart the launcher after change it."))
 
         self._settings_dirty = False
         selected_language = data["general"]["language"]

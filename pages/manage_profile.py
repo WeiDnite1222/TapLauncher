@@ -12,9 +12,10 @@ from PySide6.QtWidgets import (
 from manager.profile import ProfileDetail, ProfileManager, ProfileSummary, UpdateProfileRequest
 from manager.game import AvailableVersion
 from pages.add_modded_version import AddModdedVersionDialog
+from core_lib.qt.item_button import ItemButton
 
 
-class ManageProfileItem(QPushButton):
+class ManageProfileItem(ItemButton):
     selected = Signal(object)
 
     def __init__(self, app, profile: ProfileSummary,

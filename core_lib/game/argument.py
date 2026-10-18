@@ -2,12 +2,53 @@ import json
 import logging
 import re
 import shlex
-
+from dataclasses import dataclass
+from typing import Callable
 from core_lib.common.common import get_platform_info
-from core_lib.common.exception import LauncherException
+from core_lib.common.exception import LauncherException, ArgumentValueError
 from core_lib.game.library import get_natives_platform_info
 
 logger = logging.getLogger("Launcher.CoreLib")
+
+# =============== Features ===============
+@dataclass(frozen=True)
+class FeatureSpec:
+    required_placeholders: tuple[str, ...] = ()
+    validate: Callable[[dict], None] | None = None
+
+
+def validate_resolution(values: dict) -> None:
+    for key in ("resolution_width", "resolution_height"):
+        value = values[key]
+        if type(value) is not int or value <= 0:
+            raise ArgumentValueError(
+                f"{key} must be a positive integer."
+            )
+
+
+FEATURE_SPECS = {
+    "has_custom_resolution": FeatureSpec(
+        required_placeholders=(
+            "resolution_width",
+            "resolution_height",
+        ),
+        validate=validate_resolution,
+    ),
+    "is_demo_user": FeatureSpec(),
+    "has_quick_plays_support": FeatureSpec(
+        required_placeholders=("quickPlayPath",),
+    ),
+    "is_quick_play_singleplayer": FeatureSpec(
+        required_placeholders=("quickPlaySingleplayer",),
+    ),
+    "is_quick_play_multiplayer": FeatureSpec(
+        required_placeholders=("quickPlayMultiplayer",),
+    ),
+    "is_quick_play_realms": FeatureSpec(
+        required_placeholders=("quickPlayRealms",),
+    ),
+}
+# =============== Features end ===============
 
 def compare_versions(left: str, right: str) -> int:
     left_parts = tuple(map(int, left.split(".")))
@@ -104,12 +145,24 @@ def is_argument_allowed(argument: dict | str, allow_features: dict | None = None
 
     return allowed
 
-def replace_placeholders(argument, placeholders: dict) -> str:
-    if argument:
-        for key, value in placeholders.items():
-            argument = argument.replace("${" + key + "}", "" if value is None else str(value))
+PLACEHOLDER_PATTERN = re.compile(r"\$\{([^{}]+)\}")
 
-    return argument
+def replace_placeholders(argument, placeholders: dict, *, strict: bool = False,) -> str:
+    def replace(match: re.Match) -> str:
+        key = match.group(1)
+
+        if key not in placeholders or placeholders[key] is None:
+            if not strict:
+                return match.group(0)
+
+            reason = "unknown" if key not in placeholders else "has no value"
+            raise ArgumentValueError(
+                f"Argument placeholder {reason}: {key}"
+            )
+
+        return str(placeholders[key])
+
+    return PLACEHOLDER_PATTERN.sub(replace, argument)
 
 
 class ArgumentMappings:
@@ -217,7 +270,9 @@ def find_game_and_jvm_args(arguments: dict | str) -> tuple[list, list]:
     return game_args, jvm_args
 
 
-def parse_and_generate_arguments(arguments: list | str, mappings: ArgumentMappings, features: dict | None = None) -> \
+def parse_and_generate_arguments(arguments: list | str, mappings: ArgumentMappings,
+                                 features: dict | None = None, *, extra_placeholders: dict | None = None,
+                                 strict_placeholders: bool = False) -> \
     list[str]:
     if features is None:
         features = {}
@@ -230,6 +285,9 @@ def parse_and_generate_arguments(arguments: list | str, mappings: ArgumentMappin
 
     placeholders = mappings.generate_placeholders()
 
+    if extra_placeholders:
+        placeholders.update(extra_placeholders)
+
     for argument in arguments:
         # Check rules
         if not is_argument_allowed(argument, allow_features=features):
@@ -237,7 +295,7 @@ def parse_and_generate_arguments(arguments: list | str, mappings: ArgumentMappin
 
         # Each argument (section) may contain multiple items, convert it to list before replace placeholder
         for item in convert_argument_to_multiple_string(argument):
-            parsed = replace_placeholders(item, placeholders)
+            parsed = replace_placeholders(item, placeholders, strict=strict_placeholders)
             parsed_arguments.append(parsed)
 
     return parsed_arguments
@@ -265,19 +323,80 @@ def append_missing_necessary_jvm_arguments(arguments: list, arg_maps: ArgumentMa
 
     return result
 
-def add_feature_arguments(arguments: dict, arg_maps: ArgumentMappings, features: dict | None = None) -> list[str]:
-    result = []
+def find_match_feature_argument(arguments: list | str, feature) -> dict | None:
+    if isinstance(arguments, str):
+        arguments = shlex.split(arguments)
 
-    if features is None:
-        return result
+    for argument in arguments:
+        # Check rules
+        if not is_argument_allowed(argument, allow_features=feature):
+            continue
 
-    if features.get("has_custom_resolution"):
-        result.append(f"-Dminecraft.overrideResolution={features['resolution']}")
+        # Only dict argument has feature rule
+        if not isinstance(argument, dict):
+            continue
 
-    return result
+        return argument
+
+    return None
+
+def generate_enabled_feature_arguments(arguments: list | str, arg_maps: ArgumentMappings,
+                                       features: dict | None = None, feature_placeholders: dict | None=None,
+                                       strict_placeholders=False) -> list[str]:
+    enabled_features = dict(features or {})
+    extra_values = dict(feature_placeholders or {})
+
+    values = arg_maps.generate_placeholders()
+    values.update(extra_values)
+
+    for name, enabled in enabled_features.items():
+        if type(enabled) is not bool:
+            raise ArgumentValueError(
+                f"Feature {name} must be a boolean."
+            )
+
+        if not enabled:
+            continue
+
+        spec = FEATURE_SPECS.get(name)
+
+        # Ignore unknown feature flag, hand it to parse_and_generate_arguments
+        if spec is None:
+            continue
+
+        for key in spec.required_placeholders:
+            if key not in values or values[key] is None or values[key] == "":
+                raise ArgumentValueError(
+                    f"Feature {name} requires placeholder {key}."
+                )
+
+        if spec.validate:
+            spec.validate(values)
+
+    return parse_and_generate_arguments(
+        arguments,
+        arg_maps,
+        features=enabled_features,
+        extra_placeholders=extra_values,
+        strict_placeholders=strict_placeholders,
+    )
+
+def generate_feature_placeholders(maps: ArgumentMappings):
+    if not isinstance(maps.resolution, tuple):
+        width, height = None, None
+    else:
+        width = maps.resolution[0]
+        height = maps.resolution[1] or None
+
+    return {
+        "resolution_width": width,
+        "resolution_height": height,
+    }
+
 
 def generate_launch_command(arg_maps: ArgumentMappings, main_class: str, java_path: str, full_args: dict | str
-                            , features: dict | None = None, user_jvm_args: list[str] | None | str = None) -> list[str]:
+                            , features: dict | None = None, user_jvm_args: list[str] | None | str = None,
+                            strict_placeholders=False) -> list[str]:
     cmd = [java_path]
     game_args, jvm_args = find_game_and_jvm_args(full_args)
 
@@ -296,6 +415,7 @@ def generate_launch_command(arg_maps: ArgumentMappings, main_class: str, java_pa
             default_args,
             arg_maps,
             features=features,
+            strict_placeholders=strict_placeholders,
         )
     else:
         # Use jvm arguments that provided by user
@@ -305,13 +425,17 @@ def generate_launch_command(arg_maps: ArgumentMappings, main_class: str, java_pa
         jvm_args,
         arg_maps,
         features=features,
+        strict_placeholders=strict_placeholders,
     )
 
-    parsed_game_args = parse_and_generate_arguments(
+    feature_placeholders = generate_feature_placeholders(arg_maps)
+    parsed_game_args = generate_enabled_feature_arguments(
         game_args,
         arg_maps,
         features=features,
-    )
+        feature_placeholders=feature_placeholders,
+        strict_placeholders=strict_placeholders,
+    ) # Generate arguments that enabled by features and necessary arguments that from manifest
 
     # Legacy Minecraft don't have jvm arguments exist in the version library. We need to generate by ourselves
     parsed_jvm_args = append_missing_necessary_jvm_arguments(
@@ -322,7 +446,6 @@ def generate_launch_command(arg_maps: ArgumentMappings, main_class: str, java_pa
     cmd.extend(parsed_jvm_args)
     cmd.append(main_class)
     cmd.extend(parsed_game_args)
-
     return cmd
 
 

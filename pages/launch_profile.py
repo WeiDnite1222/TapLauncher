@@ -10,6 +10,7 @@ from core_lib.game.version_info import LATEST_VERSION_ALIASES
 from manager.profile import ProfileSummary, LaunchProfile, ProfileManager
 from manager.widgets import AskForRequest, WidgetManager
 from pages.process_log import ProcessLogWindow
+from core_lib.qt.item_button import ItemButton
 
 
 class ProfileButton(QFrame):
@@ -46,7 +47,6 @@ class ProfileButton(QFrame):
         self.version_label.setObjectName("profileVersion")
         self.arrow_label = QLabel("▾")
         self.arrow_label.setObjectName("profileArrow")
-        self.arrow_label.setStyleSheet("border-style:solid; background-color: transparent; ")
         self.arrow_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
         self.arrow_label.setFixedWidth(24)
 
@@ -87,7 +87,7 @@ class ProfileButton(QFrame):
             self.clicked.emit()
         super().mousePressEvent(event)
 
-class ProfileListItem(QPushButton):
+class ProfileListItem(ItemButton):
     selected = Signal(object)
 
     def __init__(self, profile: ProfileSummary, parent: QWidget | None = None) -> None:
@@ -209,7 +209,7 @@ class LaunchProfilePage(QWidget):
 
         # Widgets
         self.status_label = QLabel(self.app.tr_text("Select a profile to launch"))
-        self.status_label.setStyleSheet("font-size: 12px; font-weight: 600;")
+        self.status_label.setObjectName("launchStatus")
         self.status_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
 
         # Profile button (just like the official launcher look like)

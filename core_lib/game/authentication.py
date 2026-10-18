@@ -10,7 +10,7 @@ from typing import Callable
 
 import requests
 
-from core_lib.common.exception import AuthenticationSessionException, AuthenticationConnectException, \
+from core_lib.common.exception import LauncherException, AuthenticationSessionException, AuthenticationConnectException, \
     AuthenticationException, LauncherHTTPException
 
 MICROSOFT_DEVICE_CODE_URL = "https://login.microsoftonline.com/consumers/oauth2/v2.0/devicecode"
@@ -259,7 +259,8 @@ def get_xbox_token_and_user_hash(access_token: str) -> tuple[str, str, dict]:
     data = auth_exception_handler(_request_handler, stage="Signing in to Xbox Live")
     return verify_data(data)
 
-def get_xsts_token(xbox_token: str) -> tuple[str, dict]:
+def get_xsts_token(xbox_token: str, *,
+                   relying_party: str = "rp://api.minecraftservices.com/") -> tuple[str, dict]:
     """
     Get xsts token
     :param xbox_token:
@@ -270,9 +271,9 @@ def get_xsts_token(xbox_token: str) -> tuple[str, dict]:
     def _request_handler():
         r = requests.post(XSTS_AUTH_URL, json={
             "Properties": {"SandboxId": "RETAIL", "UserTokens": [xbox_token]},
-            "RelyingParty": "rp://api.minecraftservices.com/",
+            "RelyingParty": relying_party,
             "TokenType": "JWT",
-        }, headers={"Accept": "application/json"})
+        }, headers={"Accept": "application/json"}, timeout=30)
         r.raise_for_status()
         return r.json()
 
@@ -294,6 +295,37 @@ def get_xsts_token(xbox_token: str) -> tuple[str, dict]:
     )
 
     return verify_data(data)
+
+def extract_xuid(data: dict, user_hash: str) -> str | None:
+    """Read the numeric Xbox ID for the same user as the authentication chain."""
+    if not isinstance(data, dict):
+        return None
+    claims = data.get("DisplayClaims")
+    users = claims.get("xui") if isinstance(claims, dict) else None
+    if not isinstance(users, list):
+        return None
+    for user in users:
+        if not isinstance(user, dict) or user.get("uhs") != user_hash:
+            continue
+        xuid = user.get("xid")
+        if isinstance(xuid, str) and len(xuid) <= 20 and xuid.isascii() and xuid.isdecimal():
+            if 0 < int(xuid) < 2 ** 64:
+                return xuid
+    return None
+
+
+def get_xbox_xuid(xbox_token: str, user_hash: str, xsts_data: dict) -> str | None:
+    """Best-effort XUID lookup without changing the Minecraft token's relying party."""
+    xuid = extract_xuid(xsts_data, user_hash)
+    if xuid is not None:
+        return xuid
+    try:
+        _, xbox_data = get_xsts_token(xbox_token, relying_party="https://xboxlive.com")
+    except (LauncherException, requests.RequestException):
+        logger.warning("Unable to retrieve optional Xbox user ID; continuing without it.")
+        return None
+    return extract_xuid(xbox_data, user_hash)
+
 
 def get_minecraft_access_token(user_hash: str, xsts_token: str) -> tuple[str, dict]:
     """
