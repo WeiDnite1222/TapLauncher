@@ -169,6 +169,26 @@ def _check_asset(asset_id: str, asset_data: dict, relative_path: str, assets_dir
             "size": expected_size,
         }
 
+    # Check legacy asset
+    if legacy_context is not None:
+        destination: Path | None | FileObject = legacy_context["destination"]
+
+        if destination is None:
+            raise AssetManifestException("Invalid destination path")
+
+        if isinstance(destination, FileObject):
+            destination: Path = destination.path
+
+        if destination.is_file():
+            if no_hash_check and expected_size is not None:
+                destination_valid = destination.stat().st_size == expected_size
+            else:
+                file = FileObject(destination)
+                destination_valid = file.verify_sha1(hash_raw)
+
+            if destination_valid:
+                legacy_context = None
+
     return file if needs_download else None, legacy_context
 
 def collect_assets_from_manifest(manifest: dict, asset_id: str, assets_dir: Path, launcher_root: Path,
@@ -369,11 +389,23 @@ def download_assets(manifest: dict, assets_dir: Path, launcher_root: Path, no_ha
 
     index_path = Path(assets_dir, "indexes", f"{asset_id}.json")
 
-    # Download and save asset manifest
-    asset_manifest = fetch_and_save_asset_manifest(
-        manifest,
-        index_path,
-    )
+    # Reuse a valid local index so repairing legacy copies can work offline.
+    asset_manifest = None
+    index_sha1 = asset_index.get("sha1")
+
+    if index_path.is_file():
+        try:
+            if not index_sha1 or FileObject(index_path).verify_sha1(index_sha1):
+                cached = json.loads(index_path.read_text(encoding="utf-8"))
+
+                if isinstance(cached, dict) and isinstance(cached.get("objects"), dict) and cached["objects"]:
+                    asset_manifest = cached
+
+        except (OSError, ValueError):
+            logger.warning("Unable to read cached asset index: %s", index_path)
+
+    if asset_manifest is None:
+        asset_manifest = fetch_and_save_asset_manifest(manifest, index_path)
 
     # Download assets files
     assets, legacy_assets = collect_assets_from_manifest(

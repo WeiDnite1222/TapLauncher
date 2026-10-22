@@ -1,14 +1,18 @@
 import json
 import logging
+import tempfile
 import warnings
 from collections.abc import Callable
 from pathlib import Path
+from typing import Literal
 
 import requests
 
-from ..common.common import FileObject, download_file
+from ..common.common import FileObject, download_file, SUPPORTED_HASH_ALGORITHMS
 from ..common.exception import VersionManifestFetchException, NoVersionFoundException, \
-    NoSpecifiedVersionKeyException, VersionDataKeyNotFoundException, VersionManifestSaveException, HashMismatchException
+    NoSpecifiedVersionKeyException, VersionDataKeyNotFoundException, VersionManifestSaveException, \
+    HashMismatchException, UnsupportedHashAlgorithmException
+from ..i18n import SUPPORTED_LANGUAGES
 
 MOJANG_VERSION_MANIFEST_V2 = "https://piston-meta.mojang.com/mc/game/version_manifest_v2.json"
 MOJANG_VERSION_MANIFEST = "https://piston-meta.mojang.com/mc/game/version_manifest.json"
@@ -409,7 +413,33 @@ def get_core_file_download_url_and_hash(version_manifest: dict, is_server: bool=
 
     return download_url, sha1
 
-def save_version_manifest(manifest: dict, dest: Path, sha1: str | None=None) -> dict:
+def validate_version_manifest(data: dict, version_id: str | None = None) -> None:
+    """
+    Validate the version manifest
+    :param data:
+    :param version_id:
+    :return:
+    """
+    if not isinstance(data, dict):
+        raise ValueError("Version manifest must be an object")
+
+    if version_id is None:
+        # Validate root manifest
+        versions = data.get("versions")
+        if not isinstance(versions, list) or any(
+            not isinstance(item, dict)
+            or not isinstance(item.get("id"), str) or not item["id"]
+            or not isinstance(item.get("url"), str) or not item["url"]
+            for item in versions
+        ):
+            raise ValueError("Root manifest must contain a valid versions list")
+    elif (data.get("id") != version_id
+          or not any(isinstance(data.get(key), str) and data[key] for key in ("mainClass", "inheritsFrom"))):
+        # Validate specific version manifest
+        raise ValueError(f"Invalid manifest for version {version_id}")
+
+
+def save_version_manifest(manifest: dict | bytes, dest: Path, sha1: str | None=None) -> dict:
     """
     Save version manifest with hash verify
     :param manifest:
@@ -418,21 +448,22 @@ def save_version_manifest(manifest: dict, dest: Path, sha1: str | None=None) -> 
     :return:
         data: dict
     """
-    file = FileObject(
-        path=dest,
-        sha1=sha1,
-    )
-
     dest.parent.mkdir(parents=True, exist_ok=True)
+    temporary = None
 
     try:
-        method = "wb" if isinstance(manifest, bytes) else "w"
-        with dest.open(method) as f:
-            if isinstance(manifest, bytes):
-                f.write(manifest)
-            elif isinstance(manifest, dict):
-                json.dump(manifest, f)
+        payload = manifest if isinstance(manifest, bytes) else json.dumps(manifest).encode("utf-8")
+        data = json.loads(payload.decode("utf-8"))
 
+        if not isinstance(data, dict):
+            raise ValueError("Version manifest must be an object")
+
+        # Write manifest to temporary file and replace its path as destination
+        with tempfile.NamedTemporaryFile(dir=dest.parent, prefix=dest.name + ".", suffix=".tmp", delete=False) as f:
+            temporary = Path(f.name)
+            f.write(payload)
+
+        file = FileObject(temporary, sha1=sha1)
         if sha1 is not None and not file.verify_sha1(sha1):
             raise HashMismatchException(
                 "sha1",
@@ -441,16 +472,16 @@ def save_version_manifest(manifest: dict, dest: Path, sha1: str | None=None) -> 
                 file.posix_path
             )
 
-        if isinstance(manifest, bytes):
-            # Convert the data back to dict
-            return json.loads(manifest.decode("utf-8"))
-        else:
-            return manifest
+        temporary.replace(dest)
+        return data
     except Exception as e:
         logger.exception(e)
         raise VersionManifestSaveException(
             "Error saving version manifest:\n{}".format(e)
-        )
+        ) from e
+    finally:
+        if temporary is not None:
+            temporary.unlink(missing_ok=True)
 
 def fetch_and_save_version_manifest(dest: Path, target_version: str=None, root_manifest=None) -> dict | None:
     """
@@ -474,9 +505,16 @@ def fetch_and_save_version_manifest(dest: Path, target_version: str=None, root_m
         data = root_manifest
         sha1 = None
 
+    parsed = json.loads(data.decode("utf-8")) if isinstance(data, bytes) else data
+
+    if not isinstance(parsed, dict) or not isinstance(data, (bytes, dict)):
+        raise ValueError("Manifest is invalid after parsing or fetching.")
+
+    validate_version_manifest(parsed, target_version)
+
     return save_version_manifest(data, dest, sha1)
 
-def download_core_file(manifest: dict, destination: Path, is_server=False, raise_for_null_hash=False,
+def download_core_file(manifest: dict, destination: Path, is_server=False, raise_for_null_hash=True,
                        progress_callback: Callable[[str, float], None]=None) -> FileObject:
     """
     Download core file from version manifest.
@@ -491,7 +529,6 @@ def download_core_file(manifest: dict, destination: Path, is_server=False, raise
     url, sha1 = get_core_file_download_url_and_hash(manifest, is_server=is_server)
 
     destination.parent.mkdir(parents=True, exist_ok=True)
-    file = FileObject(destination, url=url)
 
     if sha1 is None and raise_for_null_hash:
         raise VersionDataKeyNotFoundException(
@@ -499,6 +536,8 @@ def download_core_file(manifest: dict, destination: Path, is_server=False, raise
         )
     elif sha1 is None:
         logger.warning("Client has no sha1.")
+
+    file = FileObject(destination, url=url, sha1=sha1)
 
     if file.exists and file.verify("sha1", sha1):
         logger.info(f"Client existed and sha1 matches.")
@@ -510,6 +549,57 @@ def download_core_file(manifest: dict, destination: Path, is_server=False, raise
         )
 
     return file
+
+def check_core_file_exists_and_verify(manifest: dict, core_file_path: Path,
+                                      is_server=False,
+                                      hash_required=True,
+                                      algorithm: Literal["sha1", "sha256", "sha512", "md5"]="sha1"):
+    """
+    Check if the core file exists in the specified path and verify its hash.
+    :param algorithm:
+    :param manifest:
+    :param core_file_path:
+    :param is_server: True if the core file is for a server, False otherwise.
+    :param hash_required: True if the hash is required to be verified, False otherwise.
+    :return:
+    """
+    _, _, downloads, _, _, _, _ = find_useful_part_in_specific_version_manifest(manifest)
+
+    if not core_file_path.exists():
+        logger.warning(f"Core file \"{core_file_path.as_posix()}\" does not exist.")
+        return False
+
+    if not downloads:
+        raise VersionDataKeyNotFoundException(
+            f"Section \"Downloads\" (Aka core file data) is missing in the manifest."
+        )
+
+    core_data = downloads.get("client" if not is_server else "server", {})
+
+    if not core_data:
+        raise VersionDataKeyNotFoundException(
+            f"Core file data is missing for {'server' if is_server else 'client'} in the manifest."
+        )
+
+    expected_hash = core_data.get(algorithm, None)
+
+    if not expected_hash and hash_required:
+        raise VersionDataKeyNotFoundException(
+            f"Hash is missing for {'server' if is_server else 'client'} in the manifest."
+        )
+
+    core_file = FileObject(core_file_path)
+
+    if algorithm not in SUPPORTED_HASH_ALGORITHMS:
+        raise UnsupportedHashAlgorithmException(
+            f"Provided hash algorithm \"{algorithm}\" is not supported."
+        )
+
+    if expected_hash and not core_file.verify(algorithm, expected_hash):
+        logger.warning(f"Core file \"{core_file_path.as_posix()}\" hash is different from manifest expected.")
+        return False
+
+    return True
 
 
 LATEST_VERSION_ALIASES = {

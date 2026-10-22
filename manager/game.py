@@ -1,3 +1,4 @@
+import hashlib
 import json
 import os
 import re
@@ -16,15 +17,14 @@ from PySide6.QtCore import QObject, Signal
 
 from constant import CLIENT_ID, LAUNCHER_VERSION
 from core_lib.common.common import FileObject, download_multiple_files
-from core_lib.common.exception import JavaRuntimeException, VersionManifestFetchException, VersionManifestSaveException, \
-    NoSpecifiedVersionKeyException
+from core_lib.common.exception import JavaRuntimeException
 from core_lib.game.argument import ArgumentMappings, generate_launch_command
 from core_lib.game.asset import check_assets_exist, download_assets, find_correct_assets_dir
 from core_lib.game.library_core import check_full_libraries_exists, download_full_libraries, generate_classpath
 from core_lib.game.mod.mod_core import merge_manifest
 from core_lib.game.version_info import fetch_and_save_version_manifest, get_specific_version_manifest_url_and_hash, \
     save_version_manifest, find_useful_part_in_specific_version_manifest, download_core_file, get_latest_version, \
-    LATEST_VERSION_ALIASES
+    LATEST_VERSION_ALIASES, check_core_file_exists_and_verify, validate_version_manifest
 from core_lib.runtime.java import find_java_installations, get_java_version
 from core_lib.runtime.mojang import download_java_runtimes, fetch_runtime_manifest, get_current_platform_runtime_key
 from manager.account import AccountManager, LaunchAccount
@@ -46,6 +46,10 @@ class ManifestManager:
         self.app = app
         self.widget_mgr = app.widget_manager
 
+        # Flags
+        self.use_expired_manifest = False
+        self._manifest_prompt_lock = threading.Lock()
+
     #
     # ============ Version Data Cache ============
     #
@@ -64,160 +68,133 @@ class ManifestManager:
 
         return path
 
-    def _cache_version_manifest(self, specified_ver: str | None = None, root_manifest: dict | None = None) \
-            -> tuple[bool, dict | None]:
-        data = None
-        path = self.switch_between_specific_path(specified_ver)
+    def _cache_version_manifest(self, specified_ver: str | None = None, root_manifest: dict | None = None) -> tuple[bool, dict | None]:
         try:
-            data = fetch_and_save_version_manifest(path, target_version=specified_ver, root_manifest=root_manifest)
-        except VersionManifestFetchException as e:
-            self.widget_mgr.signal.show_error_message.emit(
-                e.user_message,
+            data = fetch_and_save_version_manifest(
+                self.switch_between_specific_path(specified_ver),
+                target_version=specified_ver, root_manifest=root_manifest,
             )
-        except VersionManifestSaveException as e:
-            self.widget_mgr.signal.show_error_message.emit(
-                e.user_message,
-            )
-        except Exception as e:
-            self.widget_mgr.signal.show_and_print_error_message.emit(
-                {
-                    "error": traceback.format_exception(e),
-                    "title": "Cache Error",
-                    "message": "An unexpected error occurred while caching version manifest."
-                }
-            )
-
-        return True if data else False, data
+            return True, data
+        except Exception as exc:
+            self.app.logger.warning("Unable to refresh version manifest: %s", exc)
+            return False, None
 
     def _cache_custom_version_manifest(self, version_id: str, fetch_manifest_handler: Callable[[str], tuple[dict, str | None]]):
-        data = None
-        manifest_sha1 = None
-        path = self.get_specific_version_manifest_path(version_id)
-
-        # Fetch data
         try:
-            data, manifest_sha1 = fetch_manifest_handler(version_id)
-        except VersionManifestFetchException as e:
-            self.widget_mgr.signal.show_error_message.emit(
-                e.user_message,
-            )
-        except VersionManifestSaveException as e:
-            self.widget_mgr.signal.show_error_message.emit(
-                e.user_message,
-            )
-        except Exception as e:
-            self.widget_mgr.signal.show_and_print_error_message.emit(
-                {
-                    "error": traceback.format_exception(e),
-                    "title": "Cache Error",
-                    "message": "An unexpected error occurred while caching version manifest."
-                }
-            )
+            data, sha1 = fetch_manifest_handler(version_id)
+            validate_version_manifest(data, version_id)
+            save_version_manifest(data, self.get_specific_version_manifest_path(version_id), sha1=sha1)
+            return True, data
+        except Exception as exc:
+            self.app.logger.warning("Unable to refresh custom manifest %s: %s", version_id, exc)
+            return False, None
 
-        # Save data
-        if data:
+    def _read_cached_version_manifest(self, specified_ver: str | None = None, sha1: str | None = None) -> dict | None:
+        path = self.switch_between_specific_path(specified_ver)
+        try:
+            if not path.is_file():
+                return None
+            # Read once: the parsed content and the hash must describe the same bytes.
+            payload = path.read_bytes()
+            if sha1 is not None and hashlib.sha1(payload).hexdigest() != sha1:
+                raise ValueError("Cached manifest SHA-1 does not match")
+            data = json.loads(payload.decode("utf-8"))
+            validate_version_manifest(data, specified_ver)
+            return data
+        except (OSError, ValueError) as exc:
+            self.app.logger.warning("Ignoring invalid cached manifest %s: %s", path, exc)
+            return None
+
+    def _cache_is_current(self, path: Path, max_age: int) -> bool:
+        try:
+            return self.use_expired_manifest or time.time() - path.stat().st_mtime < max_age
+        except OSError:
+            return False
+
+    def _refresh_or_use_cached(self, fetch: Callable, cached: dict | None, version_id: str | None) -> dict | None:
+        for _ in range(3):
             try:
-                save_version_manifest(data, path, sha1=manifest_sha1)
-            except VersionManifestSaveException as e:
-                self.widget_mgr.signal.show_error_message.emit(
-                    e.user_message,
-                )
-                return False, None
-            except Exception as e:
-                self.widget_mgr.signal.show_and_print_error_message.emit(
-                    {
-                        "error": traceback.format_exception(e),
-                        "title": "Cache Error",
-                        "message": "An unexpected error occurred while caching version manifest."
-                    }
-                )
-                return False, None
+                success, data = fetch()
+                if success:
+                    validate_version_manifest(data, version_id)
+                    return data
+            except Exception as exc:
+                self.app.logger.warning("Manifest refresh failed: %s", exc)
 
-        return True if data else False, data
-
-    def _read_cached_version_manifest(self, specified_ver: str = None) -> dict | None:
-        path = self.switch_between_specific_path(specified_ver)
-        if not path.exists():
+        if cached is None:
             self.widget_mgr.signal.show_error_message.emit(
-                "Version manifest missing after check. Please try again later.",
+                "Unable to fetch version manifest and no valid cached manifest is available."
             )
             return None
 
-        try:
-            version_manifest = json.loads(path.read_text())
-            return version_manifest
-        except Exception as e:
-            self.widget_mgr.signal.show_and_print_error_message.emit(
-                {
-                    "error": traceback.format_exception(e),
-                    "title": "Cache Error",
-                    "message": "Unable to read version manifest."
-                }
-            )
-            return None
+        # Concurrent background tasks share one session preference and one question.
+        with self._manifest_prompt_lock:
+            if self.use_expired_manifest:
+                return cached
 
-    def get_cached_version_manifest(self, specified_ver: str = None,
-                                    max_age: int = 3600) -> dict | None:
-        path = self.switch_between_specific_path(specified_ver)
-        file = FileObject(path)
-        sha1 = None
+            request = AskForRequest(
+                title="Manifest Manager",
+                message="Unable to fetch the latest manifest. Use the validated cached data "
+                        "until the launcher is restarted? The version list may be outdated.",
+            )
+
+            request.use_plain_text = False
+            self.widget_mgr.signal.askyesno.emit(request)
+
+            if not request.wait(120) or request.result() is not True:
+                return None
+
+            self.use_expired_manifest = True
+            self.widget_mgr.signal.show_warning_message.emit(
+                "Using cached version manifests until restart. Version information may be outdated."
+            )
+
+            return cached
+
+    def get_cached_version_manifest(self, specified_ver: str | None = None, max_age: int = 3600) -> dict | None:
+        """
+        Get cached version manifest.
+        :param specified_ver:
+        :param max_age:
+        :return:
+        """
         root_manifest = None
+        sha1 = None
 
         if specified_ver:
             root_manifest = self.get_cached_version_manifest()
-
             if root_manifest is None:
                 return None
-
             try:
                 _, sha1 = get_specific_version_manifest_url_and_hash(root_manifest, specified_ver)
-            except NoSpecifiedVersionKeyException as e:
-                self.widget_mgr.signal.show_error_message.emit(
-                    f"Version {specified_ver} does not exist in version manifest.\n{e.user_message}"
-                )
+            except Exception as exc:
+                self.widget_mgr.signal.show_error_message.emit(str(exc))
                 return None
 
-        if file.exists:
-            age = time.time() - path.stat().st_mtime
+        path = self.switch_between_specific_path(specified_ver)
+        cached = self._read_cached_version_manifest(specified_ver, sha1=sha1)
 
-            # For root manifest
-            if not specified_ver and age < max_age:
-                return self._read_cached_version_manifest()
+        if cached is not None and self._cache_is_current(path, max_age):
+            return cached
 
-            # Below are all for specific ver
-            if specified_ver and sha1 is None:
-                self.app.logger.warning("Specified version '{}' hash doesn't exist.".format(specified_ver))
-
-            # Also check sha1
-            if specified_ver and age < max_age and file.verify("sha1", sha1):
-                return self._read_cached_version_manifest(specified_ver)
-
-        result, data = self._cache_version_manifest(specified_ver, root_manifest=root_manifest)
-
-        if not result:
-            return None
-
-        return data
+        return self._refresh_or_use_cached(
+            lambda: self._cache_version_manifest(specified_ver, root_manifest=root_manifest),
+            cached, specified_ver,
+        )
 
     def get_cached_custom_version_manifest(self, specified_ver: str,
                                            fetch_manifest_handler: Callable[[str], tuple[dict, str | None]],
                                            max_age=1260000) -> dict | None:
         path = self.get_specific_version_manifest_path(specified_ver)
-        file = FileObject(path)
+        cached = self._read_cached_version_manifest(specified_ver)
 
-        if file.exists:
-            age = time.time() - path.stat().st_mtime
+        if cached is not None and self._cache_is_current(path, max_age):
+            return cached
 
-            # Check file stat
-            if age < max_age:
-                return self._read_cached_version_manifest(specified_ver)
-
-        result, data = self._cache_custom_version_manifest(specified_ver, fetch_manifest_handler=fetch_manifest_handler)
-
-        if not result:
-            return None
-
-        return data
+        return self._refresh_or_use_cached(
+            lambda: self._cache_custom_version_manifest(specified_ver, fetch_manifest_handler),
+            cached, specified_ver,
+        )
 
     def create_download_progress_callback(self, progress_title: str):
         task_id = uuid4().hex
@@ -1086,10 +1063,10 @@ class LaunchManager:
                 game_dir.mkdir(parents=True, exist_ok=True)
 
             # Check client
-            if not core_file_path.exists():
+            if not check_core_file_exists_and_verify(version_manifest, core_file_path):
                 request = GameFileDownloadRequest(
                     "download_client",
-                    (client_version_id, core_file_path, version_manifest,)
+                    (client_version_id, core_file_path, version_manifest)
                 )
                 self.game_file_mgr.start_task(request)
 
@@ -1294,7 +1271,13 @@ class LaunchManager:
                 encoding="utf-8",
                 errors="replace",
             )
+
             self.launched_profiles.append(profile.profile_id)
+
+            # Cleanup
+            if profile.profile_id in self.launching_profiles:
+                self.launching_profiles.remove(profile.profile_id)
+
             result.process = process
             return result
         except Exception as e:
@@ -1357,7 +1340,7 @@ class LaunchManager:
 
         try:
             self.launching_profiles.remove(profile_id)
-        except ValueError:
+        except (ValueError, KeyError,):
             pass
 
         self.app.logger.debug(

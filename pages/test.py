@@ -1,6 +1,7 @@
 import json
 import subprocess
 import sys
+import textwrap
 import threading
 import traceback
 from pathlib import Path
@@ -21,9 +22,10 @@ from core_lib.game.library_core import generate_classpath, download_full_librari
 
 from core_lib.game.version_info import (find_useful_part_in_specific_version_manifest, \
                                         get_all_versions, get_available_version_types,
-                                        download_core_file)
+                                        download_core_file, check_core_file_exists_and_verify)
 from core_lib.qt.hack import is_main_thread
 from core_lib.runtime.java import find_java_installations
+from manager.account import LaunchAccount
 from manager.game import ManifestManager, JavaManager
 from manager.widgets import SelectPathRequest, AskForRequest
 
@@ -67,9 +69,9 @@ class TestPage(QWidget):
         self.button_6.setObjectName("ActionButton")
         self.button_6.clicked.connect(self.parse_argument)
 
-        self.button_7 = QPushButton(self.app.tr_text("Launch Game! (Offline)"))
+        self.button_7 = QPushButton(self.app.tr_text("Launch Game"))
         self.button_7.setObjectName("ActionButton")
-        self.button_7.clicked.connect(self.launch_offline_game)
+        self.button_7.clicked.connect(self.launch_game)
 
         self.ver_dropdown = QComboBox()
         self.ver_dropdown.setObjectName("Dropdown")
@@ -154,6 +156,7 @@ class TestPage(QWidget):
         self.signals.clean_output.connect(
             lambda : self.output.clear()
         )
+        self.signals.set_output.connect(self.output.setPlainText)
 
         self.load_all_types()
 
@@ -165,6 +168,7 @@ class TestPage(QWidget):
         get_selected_ver = Signal(dict)
         get_selected_type = Signal(dict)
         clean_output = Signal()
+        set_output = Signal(str)
 
     @Slot(dict)
     def get_selected_ver(self, context: dict):
@@ -248,15 +252,18 @@ class TestPage(QWidget):
 
     def run_test(self):
         self.button.setDisabled(True)
+        self.output.clear()
+        ver = self.get_selected_version()
+        if not ver:
+            self.button.setDisabled(False)
+            return
+        threading.Thread(target=self._fetch_version_data, args=(ver,), daemon=True).start()
 
+    def _fetch_version_data(self, ver):
         try:
-            self.output.clear()
-            ver = self.get_selected_version()
-
-            if not ver:
-                return
-
             ver_data = self.manifest_mgr.get_cached_version_manifest(ver)
+            if ver_data is None:
+                return
 
             arguments, asset_index, downloads, java_version, libraries, main_class, legacy_game_args = (
                 find_useful_part_in_specific_version_manifest(ver_data))
@@ -277,7 +284,7 @@ class TestPage(QWidget):
                     Extra:
                     minecraftArguments: {legacy_game_args}
                     """)
-            self.output.setPlainText(content)
+            self.signals.set_output.emit(content)
         except Exception as e:
             self.widget_mgr.signal.show_and_print_error_message.emit(
                 {
@@ -287,7 +294,7 @@ class TestPage(QWidget):
                 }
             )
         finally:
-            self.button.setDisabled(False)
+            self.widget_mgr.signal.enable_widget.emit(self.button)
 
     def run_download_client(self):
         self.button_2.setDisabled(True)
@@ -361,7 +368,7 @@ class TestPage(QWidget):
         )
         thread.start()
 
-    def launch_offline_game(self):
+    def launch_game(self):
         self.button_7.setDisabled(True)
 
         self.output.clear()
@@ -373,7 +380,7 @@ class TestPage(QWidget):
             return
 
         thread = threading.Thread(
-            target=self._launch_offline_game,
+            target=self._launch_game,
             daemon=True,
             args=(ver,)
         )
@@ -679,15 +686,46 @@ class TestPage(QWidget):
         finally:
             self.widget_mgr.signal.enable_widget.emit(self.button_6)
 
-    def _launch_offline_game(self, ver):
+    def _launch_game(self, ver):
         """
-        Launch offline game
+        Launch game
         :param ver:
         :return:
         """
+
+        # Check launch account mode
+        request = AskForRequest(title="GameTest", message="Would you like to launch game in online mode?")
+        request.use_plain_text = False
+        self.widget_mgr.signal.askyesno.emit(request)
+        if not request.wait(120):
+            self.widget_mgr.signal.show_error_message.emit(
+                "Timeout while waiting for user input."
+            )
+            self.widget_mgr.signal.enable_widget.emit(self.button_7)
+            return
+
+        offline = request.result() is not True
+
         try:
-            current_status = 0 # 0 = fetch version manifest, 1 = check client, 2 = check libraries
-            # , 3 = check assets
+            launch_account: LaunchAccount | None = None
+            if not offline:
+                # Online mode
+                launch_account: LaunchAccount | None = self.app.account_manager.get_launch_account()
+
+                if not launch_account:
+                    raise RuntimeError("Select a usage account in account page before use online launch.")
+
+                player_name = launch_account.player_name
+                auth_uuid = launch_account.minecraft_uuid
+                access_token = launch_account.access_token
+                user_type = launch_account.user_type
+                auth_xuid = launch_account.xuid
+            else:
+                player_name = "Player"
+                auth_uuid = "00000000000000000000000000000000"
+                access_token = "0"
+                user_type = "legacy"
+                auth_xuid = "null"
 
             # Version manifest
             ver_data = self.manifest_mgr.get_cached_version_manifest(ver)
@@ -711,17 +749,14 @@ class TestPage(QWidget):
             libraries_dir = Path(self.app.work_dir, "libraries")
 
             # Check client
-            current_status = 1
-            if not core_file_path.exists():
+            if not check_core_file_exists_and_verify(ver_data, core_file_path):
                 download_core_file(ver_data, core_file_path, raise_for_null_hash=True)
 
             # Libraries
-            current_status = 2
             if not check_full_libraries_exists(ver_data, libraries_dir, natives_dir):
                 download_full_libraries(ver_data, libraries_dir, natives_dir)
 
             # Asset
-            current_status = 3
             default_assets_dir = Path(self.app.work_dir, "assets")
             if not check_assets_exist(ver_data, default_assets_dir, launcher_root=self.app.work_dir):
                 callback, task_id = self.manifest_mgr.create_download_progress_callback(
@@ -744,7 +779,6 @@ class TestPage(QWidget):
 
             assets_dir = find_correct_assets_dir(asset_id, default_assets_dir, self.app.work_dir)
 
-            current_status = 4
             classpath = generate_classpath(
                 ver_data,
                 libraries_dir,
@@ -753,15 +787,15 @@ class TestPage(QWidget):
 
             # Mappings
             arg_maps = ArgumentMappings(
-                player_name="Player",
+                player_name=player_name,
                 version_name=ver,
                 game_directory=game_dir.as_posix(),
                 assets_root=assets_dir.as_posix(),
                 legacy_assets_root=assets_dir,
                 assets_index_name=asset_id,
-                auth_uuid="00000000000000000000000000000000",
-                auth_access_token="0",
-                user_type="legacy",
+                auth_uuid=auth_uuid,
+                auth_access_token=access_token,
+                user_type=user_type,
                 version_type="release",
                 natives_directory=natives_dir.as_posix(),
                 launcher_name="TestLauncher",
@@ -770,6 +804,7 @@ class TestPage(QWidget):
                 classpath_separator=";",
                 library_directory=libraries_dir.as_posix(),
                 clientid=CLIENT_ID,
+                auth_xuid=auth_xuid
             )
 
             target_args = arguments if arguments else old_args
@@ -819,7 +854,12 @@ class TestPage(QWidget):
                 strict_placeholders=False,
             )
 
-            self.widget_mgr.download_signal.log.emit(f"Launch command: {cmd}")
+            if not offline:
+                safe_cmd = ["<access token>" if value == launch_account.access_token else value for value in cmd]
+            else:
+                safe_cmd = cmd
+
+            self.widget_mgr.download_signal.log.emit(f"Launch command: {safe_cmd}")
 
             # run it
             process = subprocess.Popen(

@@ -164,8 +164,8 @@ def test_account_client_id_is_a_valid_uuid() -> None:
     manager.load_defaults()
 
     custom_id = "12345678-1234-5678-9abc-123456789abc"
-    updated = manager.set("account", {"client_id": custom_id})
-    assert str(updated.client_id) == custom_id
+    updated = manager.set("account", {"custom_client_id": custom_id})
+    assert str(updated.custom_client_id) == custom_id
 
     with pytest.raises(ValidationError):
-        manager.set("account", {"client_id": "not-a-client-id"})
+        manager.set("account", {"custom_client_id": "not-a-client-id"})

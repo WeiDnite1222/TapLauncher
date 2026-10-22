@@ -28,6 +28,9 @@ class HashMismatchException(Exception):
                                                                                           hash_name)
         super().__init__(self.message)
 
+class UnsupportedHashAlgorithmException(LauncherException):
+    user_message = "Unsupported hash algorithm."
+
 class UnsupportedPlatformException(LauncherException):
     user_message = "Current platform or architecture is not supported."
 

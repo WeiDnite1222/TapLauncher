@@ -99,10 +99,10 @@ If you see `Some runtimes are no longer available after last check`, check wheth
 then refresh the runtime list or register its new executable path.
 
 Links for available Java runtimes provider: 
-[Oracle](https://www.java.com/download/)
-[Eclipse Temurin](https://adoptium.net/)
-[Azul Zulu](https://www.azul.com/downloads/)
-[Microsoft Build of OpenJDK](https://www.microsoft.com/openjdk)
+- [Oracle](https://www.java.com/download/)
+- [Eclipse Temurin](https://adoptium.net/)
+- [Azul Zulu](https://www.azul.com/downloads/)
+- [Microsoft Build of OpenJDK](https://www.microsoft.com/openjdk)
 
 ### No profile selected or profile data cannot be loaded
 

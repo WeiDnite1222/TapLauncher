@@ -1,14 +1,18 @@
 from __future__ import annotations
 
 import base64
+import copy
 import hashlib
 import logging
+import os
 import platform
+import random
+import string
 import zipfile
 from collections.abc import Callable
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from pathlib import Path
-from typing import List
+from typing import List, Type, Literal
 
 import requests
 
@@ -19,6 +23,8 @@ DEFAULT_DOWNLOAD_CHUNK_SIZE = 4096
 THREADED_DOWNLOAD_MAX_WORKERS = 10
 
 logger = logging.getLogger("Launcher.CoreLib")
+
+SUPPORTED_HASH_ALGORITHMS = ["sha1", "sha256", "sha512", "md5"]
 
 class FileObject:
     def __init__(self, path: Path, url=None, sha1=None, sha256=None, sha512=None, md5=None, size=None):
@@ -50,6 +56,16 @@ class FileObject:
             return True
 
         return False
+
+    def replace_path(self, path: Path):
+        """
+        Replace the target file path
+        This operation will invalidate the hash cache
+        :param path:
+        :return:
+        """
+        self.__path = path
+        self.invalidate_hash_cache()
 
     def is_same(self, file: FileObject, hash_name="sha256") -> bool:
         if hash_name == "sha1":
@@ -101,9 +117,9 @@ class FileObject:
         return self.sha512 == expected_hash if expected_hash else self.expected_sha512 == self.sha512
 
     def verify_md5(self, expected_hash=None):
-        return self.md5 == expected_hash if expected_hash else self.expected_sha1 == self.md5
+        return self.md5 == expected_hash if expected_hash else self.expected_md5 == self.md5
 
-    def verify(self, algorithm, expected_hash=None):
+    def verify(self, algorithm: Literal["sha1", "sha256", "sha512", "md5"], expected_hash=None):
         if algorithm == "sha1":
             return self.verify_sha1(expected_hash if expected_hash else self.expected_sha1)
 
@@ -166,66 +182,117 @@ class FileObject:
         self.__sha512 = None
         self.__md5 = None
 
+def generate_random_suffix():
+    return "".join(random.choices(string.ascii_lowercase + string.digits, k=8))
 
-def download_file(file: FileObject, overwrite=True, progress_callback: Callable[int]=None) -> FileObject | Exception:
+def download_file(file: FileObject, overwrite=True, progress_callback: Callable[int]=None,
+                  safe_download=True, max_temp_suffix_retry=5) -> FileObject | Exception:
     """
-    Download file from url
+    Download the file from url
     :param file: File (Objected)
-    :param overwrite: Overwrite existing file
+    :param overwrite: Overwrites existing file
     :param progress_callback: Callback function called with progress information
+    :param safe_download: Download the file at temp location. If hash matches, Replace the old one with the new one
+    :param max_temp_suffix_retry: Maximum number of retries for generating a unique temp file suffix
     :return:
     """
 
-    file.path.parent.mkdir(parents=True, exist_ok=True)
+    def gen_random(path: Path):
+        suffix = generate_random_suffix()
+        new = path.with_suffix(path.suffix + "." + suffix)
+
+        if new.exists():
+            raise Exception("File already exists")
+
+        return new
+
+    if safe_download:
+        temp_path: Path | None = attempt(lambda: gen_random(file.path), Exception, max_temp_suffix_retry, logger)
+
+        if not temp_path:
+            raise DownloadException("Failed to generate unique temp file suffix")
+
+        target_file = copy.copy(file)
+        target_file.replace_path(temp_path)
+    else:
+        target_file = file
+
+    target_file.path.parent.mkdir(parents=True, exist_ok=True)
 
     if file.exists and not overwrite:
-        raise FileExistsError("File {} already exists. Use overwrite=True to overwrite.".format(file))
+        raise FileExistsError("File {} already exists. Use overwrite=True to overwrite.".format(target_file))
 
-    if file.url is None:
-        raise ValueError("Target file {} URL cannot be None.".format(file))
+    if target_file.url is None:
+        raise ValueError("Target file {} URL cannot be None.".format(target_file))
 
-    logger.debug("Downloading file {} to {}".format(file.url, file))
+    logger.debug("Downloading file {} to {}".format(target_file.url, target_file))
 
-    file.invalidate_hash_cache() # Clean cache hash
     try:
-        with requests.get(file.url, stream=True) as r:
-            r.raise_for_status()
-            current_chunk = 0
-            total_bytes = r.headers.get("content-length", None)
-            logger.debug("URL: {}".format(file.url))
-            logger.debug("Response code: {}".format(r.status_code))
+        target_file.invalidate_hash_cache()  # Clean cache hash
+        try:
+            with requests.get(target_file.url, stream=True) as r:
+                r.raise_for_status()
+                current_chunk = 0
+                total_bytes = r.headers.get("content-length", None)
+                logger.debug("URL: {}".format(target_file.url))
+                logger.debug("Response code: {}".format(r.status_code))
 
-            with file.path.open("wb") as f:
-                for chunk in r.iter_content(chunk_size=DEFAULT_DOWNLOAD_CHUNK_SIZE):
-                    if not chunk:
-                        break
+                with target_file.path.open("wb") as f:
+                    for chunk in r.iter_content(chunk_size=DEFAULT_DOWNLOAD_CHUNK_SIZE):
+                        if not chunk:
+                            break
 
-                    f.write(chunk)
-                    current_chunk += 1
+                        f.write(chunk)
+                        current_chunk += 1
 
-                    if callable(progress_callback) and total_bytes is not None:
-                        current_progress = ((current_chunk * DEFAULT_DOWNLOAD_CHUNK_SIZE) / int(total_bytes)) * 100
-                        progress_callback(file.name, current_progress)
-    except Exception as e:
-        raise DownloadException(
-            "An error occurred while downloading file {}. {}".format(file.url, e)
-        )
+                        if callable(progress_callback) and total_bytes is not None:
+                            current_progress = ((current_chunk * DEFAULT_DOWNLOAD_CHUNK_SIZE) / int(total_bytes)) * 100
+                            progress_callback(target_file.name, current_progress)
+        except Exception as e:
+            raise DownloadException(
+                "An error occurred while downloading file {}. {}".format(target_file.url, e)
+            )
+        finally:
+            target_file.invalidate_hash_cache()
+
+        if target_file.expected_sha256 and not target_file.verify_sha256():
+            raise HashMismatchException("sha256", target_file.sha256, target_file.expected_sha256,
+                                        target_file.posix_path)
+        elif target_file.expected_sha1 and not target_file.verify_sha1():
+            raise HashMismatchException("sha1", target_file.sha1, target_file.expected_sha1, target_file.posix_path)
+        elif target_file.expected_md5 and not target_file.verify_md5():
+            raise HashMismatchException("md5", target_file.md5, target_file.expected_md5, target_file.posix_path)
+        elif target_file.expected_sha512 and not target_file.verify_sha512():
+            raise HashMismatchException("sha512", target_file.sha512, target_file.expected_sha512,
+                                        target_file.posix_path)
+
+        if any([target_file.expected_sha1, target_file.expected_md5, target_file.expected_sha256]):
+            logger.debug("File hash is match as the expected hash.")
+        else:
+            logger.warning("Hash is not checked for file: {}".format(target_file.posix_path))
+
+        if safe_download:
+            try:
+                os.replace(target_file.path, file.path)
+            except Exception as e:
+                logger.error(f"Failed to replace file: {target_file.posix_path}. Error: {str(e)}")
+
+                if target_file.exists:
+                    try:
+                        os.remove(target_file.path)
+                    except Exception as second_exc:
+                        logger.error(f"Failed to remove temp file: {target_file.posix_path}. Error: {str(second_exc)}")
+
+                raise DownloadException(f"Failed to replace temp file {target_file.path} as {file.path}")
     finally:
+        # Cleanup
         file.invalidate_hash_cache()
 
-    if file.expected_sha256 and not file.verify_sha256():
-        raise HashMismatchException("sha256", file.sha256, file.expected_sha256, file.posix_path)
-    elif file.expected_sha1 and not file.verify_sha1():
-        raise HashMismatchException("sha1", file.sha1, file.expected_sha1, file.posix_path)
-    elif file.expected_md5 and not file.verify_md5():
-        raise HashMismatchException("md5", file.md5, file.expected_md5, file.posix_path)
-    elif file.expected_sha512 and not file.verify_sha512():
-        raise HashMismatchException("sha512", file.sha512, file.expected_sha512, file.posix_path)
-
-    if any([file.expected_sha1, file.expected_md5, file.expected_sha256]):
-        logger.debug("File hash is match as the expected hash.")
-    else:
-        logger.warning("Hash is not checked for file: {}".format(file.posix_path))
+        if safe_download:
+            try:
+                target_file.path.unlink(missing_ok=True)
+            except OSError as exc:
+                logger.warning("Unable to remove temporary download: %s", exc)
 
     return file
 
@@ -338,3 +405,37 @@ def bytes_to_data_url(image_data: bytes,  mime_type: str = "image/png",) -> str:
 
     encoded = base64.b64encode(image_data).decode("ascii")
     return f"data:{mime_type};base64,{encoded}"
+
+def attempt(function: Callable, exceptions: Type[Exception],
+            retry: int = 10, logger_obj: logging.Logger | None = None):
+    """
+    Attempt to execute a function with retries and logging.
+    :param function: The function to attempt. It should throw the specified exception that has written in exceptions
+    if failed.
+    :param exceptions: The exception type to catch.
+    :param retry: The number of retries.
+    :param logger_obj: The logger object for logging.
+    :return: The result of the function if successful, None otherwise.
+    """
+    def log_info(message):
+        if logger_obj:
+            logger_obj.info(message)
+        else:
+            print("INFO: {}".format(message))
+
+    def log_error(message):
+        if logger_obj:
+            logger_obj.error(message)
+        else:
+            print("ERROR: {}".format(message))
+
+    for i in range(1, retry+1):
+        if i > 1:
+            log_info(f"Attempt {i-1} failed. Retrying...")
+
+        try:
+            return function()
+        except exceptions as e:
+            log_error(f"Attempt {i} failed: {e}")
+
+    return None
