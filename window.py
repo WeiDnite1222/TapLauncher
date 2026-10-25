@@ -1,8 +1,10 @@
 from pathlib import Path
+from html import escape
+import sys
 
 from PySide6 import QtWidgets
 from PySide6.QtCore import QSize
-from PySide6.QtGui import QIcon, Qt, QPixmap
+from PySide6.QtGui import QIcon, Qt, QPixmap, QAction
 from PySide6.QtWidgets import QApplication, QMainWindow, QLabel, QVBoxLayout, QWidget, QToolButton, \
     QStackedWidget
 from PySide6.QtCore import Slot
@@ -11,7 +13,7 @@ from PySide6.QtWidgets import QMessageBox, QFileDialog
 from core_lib.qt import messagebox
 from core_lib.qt.progress_dialog import ProgressDialog
 from core_lib.qt.messagebox import ask_yes_no_with_plain_text
-from constant import MAIN_REPO_URL
+from constant import MAIN_REPO_URL, LAUNCHER_VERSION, LAUNCHER_NAME, LAUNCHER_DESCRIPTION
 from manager.widgets import AskForRequest, SelectPathRequest
 from pages.account import AccountPage
 from pages.create_profile  import CreateProfilePage
@@ -476,3 +478,49 @@ class LauncherMainWindow(QMainWindow):
         widget_signal.ask_for_path.connect(
             self.ask_for_path
         )
+
+        self.add_mac_os_about_menu()
+
+    def add_mac_os_about_menu(self) -> None:
+        if sys.platform != "darwin" or hasattr(self, "_mac_os_about_dialog"):
+            return
+
+        tr = self.app.tr_text
+        title = f"{tr('About')} {LAUNCHER_NAME}"
+        version = escape(tr("Version: {version}", version=LAUNCHER_VERSION))
+        description = escape(LAUNCHER_DESCRIPTION.strip()).replace("\n", "<br>")
+
+        dialog = QMessageBox(self)
+        dialog.setWindowTitle(title)
+        dialog.setTextFormat(Qt.TextFormat.RichText)
+
+        dialog.setText(
+            f"<b>{escape(LAUNCHER_NAME)}</b><br>{version}<br><br>"
+            f'{description}<br><br><a href="{escape(MAIN_REPO_URL)}">'
+            f"{escape(tr('Main repo'))}</a>"
+        )
+        dialog.setStandardButtons(QMessageBox.StandardButton.Ok)
+        dialog.setWindowModality(Qt.WindowModality.NonModal)
+
+        # Add app icon to dialog
+        icon_path = self.app.icon_dir / "apple-app-icon-default.png"
+        if not icon_path.is_file():
+            icon_path = self.app.icon_path
+        icon = QIcon(str(icon_path))
+        if not icon.isNull():
+            dialog.setWindowIcon(icon)
+            dialog.setIconPixmap(icon.pixmap(QSize(128, 128)))
+        self._mac_os_about_dialog = dialog
+
+        def show_about() -> None:
+            dialog.show()
+            dialog.raise_()
+            dialog.activateWindow()
+
+        menu_bar = self.menuBar()
+        menu_bar.setNativeMenuBar(True)
+        help_menu = menu_bar.addMenu(tr("About"))
+        about_action = QAction(title, self)
+        about_action.setMenuRole(QAction.MenuRole.AboutRole)
+        about_action.triggered.connect(show_about)
+        help_menu.addAction(about_action)

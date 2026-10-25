@@ -12,10 +12,9 @@ from PySide6.QtWidgets import (
 from manager.profile import ProfileDetail, ProfileManager, ProfileSummary, UpdateProfileRequest
 from manager.game import AvailableVersion
 from pages.add_modded_version import AddModdedVersionDialog
-from core_lib.qt.item_button import ItemButton
 
 
-class ManageProfileItem(ItemButton):
+class ManageProfileItem(QPushButton):
     selected = Signal(object)
 
     def __init__(self, app, profile: ProfileSummary,
@@ -26,6 +25,8 @@ class ManageProfileItem(ItemButton):
         self.app = app
         self.profile = profile
         self.setObjectName("manageProfileItem")
+        # Custom row backgrounds cover the full widget, including native macOS margins.
+        self.setAttribute(Qt.WidgetAttribute.WA_LayoutUsesWidgetRect)
         self.setCheckable(True)
         self.setCursor(Qt.CursorShape.PointingHandCursor)
         self.setMinimumHeight(64)

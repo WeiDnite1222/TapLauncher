@@ -1,0 +1,5 @@
+group = "net.wei"
+id = "experimentalfarm"
+name = "Experimental Farm"
+version = ">=1"
+entrypoint = "__init__.py:entry"

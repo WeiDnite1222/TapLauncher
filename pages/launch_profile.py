@@ -10,7 +10,6 @@ from core_lib.game.version_info import LATEST_VERSION_ALIASES
 from manager.profile import ProfileSummary, LaunchProfile, ProfileManager
 from manager.widgets import AskForRequest, WidgetManager
 from pages.process_log import ProcessLogWindow
-from core_lib.qt.item_button import ItemButton
 
 
 class ProfileButton(QFrame):
@@ -87,7 +86,7 @@ class ProfileButton(QFrame):
             self.clicked.emit()
         super().mousePressEvent(event)
 
-class ProfileListItem(ItemButton):
+class ProfileListItem(QPushButton):
     selected = Signal(object)
 
     def __init__(self, profile: ProfileSummary, parent: QWidget | None = None) -> None:

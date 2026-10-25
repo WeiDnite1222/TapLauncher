@@ -16,7 +16,8 @@
 #    nuitka-project: --macos-app-icon={MAIN_DIRECTORY}/resources/icons/apple-app-icon-default.png
 #    nuitka-project: --macos-app-name="TapLauncher"
 #    nuitka-project: --macos-signed-app-name="net.wei.taplauncher"
-#    nuitka-project:--output-filename="TapLauncher"
+#    nuitka-project: --output-filename="TapLauncher"
+#    nuitka-project: --output-folder-name=TapLauncher.app
 import os
 import sys
 import argparse

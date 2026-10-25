@@ -16,3 +16,5 @@ This launcher should adhere to the following rules:
 5: Freedom like a bird (This project uses the MIT license)
 """
 __website__ = "https://repo.weispace.net/wei/Launcher"
+
+from TapLauncher import Plugin, PluginManager, core
