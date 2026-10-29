@@ -1359,3 +1359,8 @@ class GameManager(QObject):
         self.game_file = GameFileManager(self.app, manifest_manager=self.manifest)
         self.launch = LaunchManager(self.app, self.manifest,
                                     self.java, self.game_file, self.account_manager, self.profile_mgr)
+
+    def register_plugin_apis(self, plugin_manager):
+        plugin_manager.register_api("launcher.game.versions.list", self.manifest.list_available_profile_versions)
+        plugin_manager.register_api("launcher.game.java.list", self.java.list_runtimes)
+        plugin_manager.register_api("launcher.game.is_profile_running", self.launch.is_profile_running)

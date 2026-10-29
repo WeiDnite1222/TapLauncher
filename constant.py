@@ -1,4 +1,4 @@
-LAUNCHER_VERSION = "0.0.9-alpha"
+LAUNCHER_VERSION = "0.1.0-alpha"
 LAUNCHER_NAME = "TapLauncher"
 LAUNCHER_DIR_NAME = "TapLauncher"
 MAIN_REPO_URL = "https://repo.weispace.net/wei/Launcher/"
@@ -16,3 +16,5 @@ Launcher while being more lightweight and easier to use.
 
 This launcher is not associated with Mojang Studios or Microsoft. Is a personal project that just for fun.
 """
+LAUNCHER_DESCRIPTION_KEYWORD = "$ABOUT_THIS_LAUNCHER"
+WHEEL_PLUGIN_API_VERSION = "0.0.1"

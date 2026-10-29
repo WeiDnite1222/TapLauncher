@@ -20,7 +20,7 @@ from PySide6.QtWidgets import (
 from constant import MICROSOFT_VERIFY_ENDPOINT, CLIENT_ID
 
 from core_lib.qt.hack import move_window_to_center
-from manager.account import AccountManager, AccountSummary, AccountLoginStatus
+from manager.account import AccountLoginStatus, AccountSummary, AccountManager
 from manager.settings_models import AccountSettings
 
 
@@ -195,12 +195,17 @@ class AccountPage(QWidget):
         self.refresh_button = QPushButton(self.app.tr_text("Refresh all"))
         self.reload_button = QPushButton(self.app.tr_text("Reload accounts"))
         self.delete_all_button = QPushButton(self.app.tr_text("Delete All"))
+        self.refresh_avatar_cache_button = QPushButton(self.app.tr_text("Refresh avatar cache"))
 
         # Button click handle
         self.add_account_button.clicked.connect(self.start_login_page)
         self.refresh_button.clicked.connect(self.refresh_accounts)
         self.reload_button.clicked.connect(self.reload_accounts)
         self.delete_all_button.clicked.connect(self.account_manager.delete_all_accounts)
+        self.refresh_avatar_cache_button.clicked.connect(self.refresh_accounts_head)
+
+        # Size
+        self.avatar_size = QSize(32, 32)
 
         # Bind widget
         main_layout.addWidget(self.account_list)
@@ -208,6 +213,7 @@ class AccountPage(QWidget):
         right_layout.addWidget(self.refresh_button)
         right_layout.addWidget(self.reload_button)
         right_layout.addWidget(self.delete_all_button)
+        right_layout.addWidget(self.refresh_avatar_cache_button)
         right_layout.addStretch()
 
         layout.addLayout(main_layout, 1)
@@ -298,12 +304,11 @@ class AccountPage(QWidget):
         list_item = QListWidgetItem()
         list_item.setData(Qt.ItemDataRole.UserRole, account.id)
 
-        head_size = QSize(32, 32)
         widget = AccountWidget(
             self.app,
             account.id,
             account.display_name,
-            self.account_manager.get_head_pixmap(account.avatar, head_size),
+            self.account_manager.get_head_pixmap(account.avatar, self.avatar_size),
             self.app.tr_text("Current" if is_current else "Available"),
             self,
             delete_account_callback=lambda: self._delete_account(account.id),
@@ -317,11 +322,31 @@ class AccountPage(QWidget):
         self.account_list.setItemWidget(list_item, widget)
 
         if not self.account_manager.has_saved_head(account.avatar):
-            self.account_manager.request_account_head(
-                account.id,
-                account.minecraft_name or account.username,
-                max(head_size.width(), head_size.height()),
-            )
+            self._update_account_head(account.id, account.minecraft_name or account.username)
+
+    def refresh_accounts_head(self):
+        for row in range(self.account_list.count()):
+            item = self.account_list.item(row)
+            widget = self.account_list.itemWidget(item)
+            if isinstance(widget, AccountWidget):
+                related_account = self.account_manager.get_account(widget.account_id)
+
+                if not related_account:
+                    continue
+
+                self._update_account_head(
+                    related_account.id,
+                    related_account.minecraft_name or related_account.username,
+                    force=True,
+                )
+
+    def _update_account_head(self, account_id: str, username: str, *, force: bool = False):
+        self.account_manager.request_account_head(
+            account_id,
+            username,
+            max(self.avatar_size.width(), self.avatar_size.height()),
+            force=force,
+        )
 
     def _account_head_updated(self, account_id: str):
         account = self.account_manager.get_account(account_id)
@@ -383,9 +408,9 @@ class AccountPage(QWidget):
     def start_login_page(self):
         # Active existing login dialog
         if self.login_dialog is not None:
-            self.login_dialog.raise_()
-            self.login_dialog.activateWindow()
-            return
+            self.app.logger.info("Destroying existing login dialog...")
+            self.login_dialog.close()
+            self.login_dialog.deleteLater()
 
         # Create login dialog
         self.add_account_button.setEnabled(False)
@@ -426,6 +451,14 @@ class AccountPage(QWidget):
 
         if created_id is not None:
             self.account_authenticated.emit({"account_id": created_id})
+
+            account = self.account_manager.get_account(created_id)
+
+            if not account:
+                return
+
+            # Update head image
+            self._update_account_head(created_id, account.username)
 
     def _login_failed(self, message: str):
         if self.login_dialog is not None:

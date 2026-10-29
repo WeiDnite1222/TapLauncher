@@ -3,7 +3,7 @@ import warnings
 from typing import Literal, Any
 from uuid import UUID
 
-from pydantic import BaseModel, ConfigDict, field_validator, model_validator
+from pydantic import BaseModel, ConfigDict, field_validator, model_validator, Field
 
 from constant import CLIENT_ID
 
@@ -75,3 +75,6 @@ class AccountSettings(WarnExtraModel):
         if value < 60 or value > 86400:
             raise ValueError("token refresh interval must be at least 60 seconds and at most 1 day")
         return value
+
+class PluginSettings(WarnExtraModel):
+    enabled: list[str] = Field(default_factory=list)

@@ -114,6 +114,14 @@ class ProfileManager(QObject):
     def default_profile_path(self):
         return Path(self.app.work_dir, DEFAuLT_PROFILE_RELATIVE_PATH)
 
+    def register_plugin_apis(self, plugin_manager):
+        plugin_manager.register_api("launcher.profiles.list", self.list_profiles)
+        plugin_manager.register_api("launcher.profiles.get", self.get_profile)
+        plugin_manager.register_api("launcher.profiles.contains", self.contains)
+        plugin_manager.register_api("launcher.profiles.current_id", self.get_current_profile_id)
+        plugin_manager.register_api("launcher.profiles.set_current", self.set_current_profile)
+        plugin_manager.register_api("launcher.profiles.reload", self.reload)
+
     # File lifetime
     def create_profiles(self, path: str | Path | None=None) -> bool:
         path = Path(path) if path is not None else self.default_profile_path

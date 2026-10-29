@@ -1,5 +1,8 @@
 group = "net.wei"
 id = "experimentalfarm"
-name = "Experimental Farm"
-version = ">=1"
-entrypoint = "__init__.py:entry"
+name = "實驗田"
+version = "1.0.0"
+api_version = ">=0.0.1"
+entrypoint = "__init__.py:entry" # Python file name:endpoint
+icon = "nugget.gif" # Relative to this plugin directory; GIF, PNG, JPG or BMP
+description = "A experimental plugin!"

@@ -34,6 +34,11 @@ class SettingsManager:
     def registered_sections(self) -> tuple[str, ...]:
         return tuple(self._models)
 
+    def register_plugin_apis(self, plugin_manager):
+        plugin_manager.register_api("launcher.settings.sections", lambda: self.registered_sections)
+        plugin_manager.register_api("launcher.settings.get", lambda section: self.get(section).model_dump(mode="python"))
+        plugin_manager.register_api("launcher.settings.choices", self.choices)
+
     def register(self, section: str, model: type[ModelT], *, replace: bool = False) -> type[ModelT]:
         """
         Register a new model

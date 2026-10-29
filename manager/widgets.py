@@ -41,6 +41,11 @@ class WidgetManager(QObject):
         self.signal = self.WidgetSignal(self)
         self.download_signal = self.DownloadSignal(self)
 
+    def register_plugin_apis(self, plugin_manager):
+        plugin_manager.register_api("launcher.ui.show_info", self.signal.show_info_message.emit)
+        plugin_manager.register_api("launcher.ui.show_warning", self.signal.show_warning_message.emit)
+        plugin_manager.register_api("launcher.ui.show_error", self.signal.show_error_message.emit)
+
     class DownloadSignal(QObject):
         started = Signal(str, str)  # task_id, display_name
         progress = Signal(str, str, float)  # task_id, status, percent

@@ -1,5 +1,5 @@
 """
-Contains some function that deal with 3rd party api
+Contains some functions that dealing with 3rd party api
 """
 import requests
 

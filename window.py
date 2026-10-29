@@ -458,7 +458,8 @@ class LauncherMainWindow(QMainWindow):
         )
 
         widget_signal.show_and_print_error_message.connect(
-            self.show_and_print_error
+            self.show_and_print_error,
+            Qt.ConnectionType.QueuedConnection,
         )
 
         widget_signal.enable_widget.connect(
@@ -524,3 +525,7 @@ class LauncherMainWindow(QMainWindow):
         about_action.setMenuRole(QAction.MenuRole.AboutRole)
         about_action.triggered.connect(show_about)
         help_menu.addAction(about_action)
+
+    def register_plugin_apis(self, plugin_manager):
+        plugin_manager.register_api("launcher.window.add_toolbar_button", self.toolbar.add_button)
+        self.manage_profile_page.register_plugin_apis(plugin_manager)

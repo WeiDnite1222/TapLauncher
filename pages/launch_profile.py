@@ -5,6 +5,7 @@ from PySide6.QtGui import QIcon, QMouseEvent, QHideEvent, QPixmap, QPainter
 from PySide6.QtWidgets import (QWidget, QVBoxLayout, QLabel, QHBoxLayout, QPushButton, QScrollArea, QFrame,
                                QSizePolicy, QApplication)
 
+from core_lib.qt.item_button import ItemButton
 from manager.game import LaunchManager, LaunchResult
 from core_lib.game.version_info import LATEST_VERSION_ALIASES
 from manager.profile import ProfileSummary, LaunchProfile, ProfileManager
@@ -86,7 +87,8 @@ class ProfileButton(QFrame):
             self.clicked.emit()
         super().mousePressEvent(event)
 
-class ProfileListItem(QPushButton):
+
+class ProfileListItem(ItemButton):
     selected = Signal(object)
 
     def __init__(self, profile: ProfileSummary, parent: QWidget | None = None) -> None:
@@ -475,6 +477,7 @@ class LaunchProfilePage(QWidget):
 
             if not request.wait(60):
                 self.widget_mgr.signal.show_error_message.emit(
+                    +
                     self.app.tr_text("Time out waiting for request for launch.")
                 )
                 return

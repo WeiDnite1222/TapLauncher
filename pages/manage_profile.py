@@ -1,20 +1,22 @@
 import shutil
 from pathlib import Path
+from typing import Callable
 
 from PySide6.QtCore import Qt, QUrl, Signal
 from PySide6.QtGui import QDesktopServices, QIcon
 from PySide6.QtWidgets import (
     QFileDialog, QFormLayout, QFrame, QHBoxLayout, QLabel, QLineEdit,
     QMessageBox, QPushButton, QScrollArea, QSizePolicy, QSpinBox,
-    QVBoxLayout, QWidget, QMenu, QComboBox,
+    QVBoxLayout, QWidget, QMenu, QComboBox, QTabWidget,
 )
 
+from core_lib.qt.item_button import ItemButton
 from manager.profile import ProfileDetail, ProfileManager, ProfileSummary, UpdateProfileRequest
 from manager.game import AvailableVersion
 from pages.add_modded_version import AddModdedVersionDialog
 
 
-class ManageProfileItem(QPushButton):
+class ManageProfileItem(ItemButton):
     selected = Signal(object)
 
     def __init__(self, app, profile: ProfileSummary,
@@ -94,6 +96,8 @@ class ManageProfilePage(QWidget):
     Profile manage page
     """
 
+    selected_profile_changed = Signal(object)
+
     VERSION_CATEGORIES = (
         ("Vanilla", "vanilla"),
         ("Modded", "modded"),
@@ -136,12 +140,14 @@ class ManageProfilePage(QWidget):
         self.options_layout.setContentsMargins(20, 16, 20, 20)
         self.options_layout.setSpacing(14)
         self.options_scroll.setWidget(self.options_content)
-        columns.addWidget(self.options_scroll, 3)
 
+        # Tabs
+        self.profile_tabs = QTabWidget()
         self.empty_label = QLabel(self.app.tr_text("Select a profile from the list to edit its settings."))
         self.empty_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
         self.empty_label.setWordWrap(True)
         self.options_layout.addWidget(self.empty_label, 1)
+        columns.addWidget(self.profile_tabs, 3)
 
         self.editor = QFrame()
         self.editor.setObjectName("profileEditor")
@@ -221,6 +227,21 @@ class ManageProfilePage(QWidget):
         self.app.apply_qss(Path("manage_profile.qss"), self.setStyleSheet)
         self._load_type_dropdown()
         self.refresh_profiles()
+
+        self._tabs = {
+            "Profile settings": self.options_scroll
+        }
+
+        self.app.i18n.language_changed.connect(self.load_profile_page_for_tabs)
+        self.load_profile_page_for_tabs()
+
+    def load_profile_page_for_tabs(self, *_args):
+        for tab_name, page in self._tabs.items():
+            index = self.profile_tabs.indexOf(page)
+            if index < 0:
+                self.profile_tabs.addTab(page, self.app.tr_text(tab_name))
+            else:
+                self.profile_tabs.setTabText(index, self.app.tr_text(tab_name))
 
     @staticmethod
     def _scroll_area(name: str) -> QScrollArea:
@@ -303,6 +324,7 @@ class ManageProfilePage(QWidget):
         else:
             self.editor.hide()
             self.empty_label.show()
+            self.selected_profile_changed.emit(None)
 
     def select_profile(self, profile: ProfileSummary) -> None:
         detail = self.profile_manager.get_profile(profile.id)
@@ -318,6 +340,7 @@ class ManageProfilePage(QWidget):
         self._set_detail(detail)
         self.empty_label.hide()
         self.editor.show()
+        self.selected_profile_changed.emit(detail)
 
     def _select_version(self, version_id: str) -> None:
         for index in range(self.version_dropdown.count()):
@@ -496,3 +519,66 @@ class ManageProfilePage(QWidget):
         if answer == QMessageBox.StandardButton.Yes:
             if self.profile_manager.remove_profile(profile_id):
                 self.selected_profile_id = None
+
+    def add_page(self, page_name: str, page: QScrollArea) -> Callable[[], None]:
+        """Add a plugin tab and return an idempotent cleanup callback."""
+        if not isinstance(page_name, str) or not page_name.strip():
+            raise ValueError("Invalid page name")
+
+        if not isinstance(page, QScrollArea):
+            raise ValueError("Page must be a QScrollArea")
+
+        if page_name in self._tabs:
+            raise ValueError("Page name already exists")
+        if page in self._tabs.values():
+            raise ValueError("Page is already registered")
+
+        self._tabs[page_name] = page
+        self.load_profile_page_for_tabs()
+
+        def remove_page():
+            # An old cleanup callback must not remove a replacement tab.
+            if self._tabs.get(page_name) is page:
+                self.remove_page(page_name)
+
+        return remove_page
+
+    def remove_page(self, page_name: str) -> bool:
+        if page_name == "Profile settings":
+            raise ValueError("The profile settings page cannot be removed")
+        page = self._tabs.pop(page_name, None)
+        if page is None:
+            return False
+        index = self.profile_tabs.indexOf(page)
+        if index >= 0:
+            self.profile_tabs.removeTab(index)
+        page.hide()
+        page.deleteLater()
+        return True
+
+    def register_plugin_apis(self, plugin_manager):
+        plugin_manager.register_api("launcher.manage_profile_page.add_page", self.add_page)
+        plugin_manager.register_api("launcher.manage_profile_page.remove_page", self.remove_page)
+        plugin_manager.register_api("launcher.manage_profile_page.subscribe_profile", self.subscribe_profile)
+
+    def subscribe_profile(self, callback: Callable) -> Callable[[], None]:
+        """Send saved details for the editor selection, including the initial state."""
+        if not callable(callback):
+            raise TypeError("Profile callback must be callable")
+        self.selected_profile_changed.connect(callback)
+        connected = True
+
+        def cleanup():
+            nonlocal connected
+            if connected:
+                self.selected_profile_changed.disconnect(callback)
+                connected = False
+
+        try:
+            detail = (self.profile_manager.get_profile(self.selected_profile_id)
+                      if self.selected_profile_id is not None else None)
+            callback(detail)
+        except BaseException:
+            cleanup()
+            raise
+        return cleanup

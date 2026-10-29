@@ -15,9 +15,10 @@ from PySide6.QtWidgets import (
     QWidget, QScrollArea, QSizePolicy, QSpinBox,
 )
 
-from constant import LAUNCHER_DESCRIPTION, LAUNCHER_NAME, LAUNCHER_VERSION
+from constant import LAUNCHER_DESCRIPTION, LAUNCHER_NAME, LAUNCHER_VERSION, LAUNCHER_DESCRIPTION_KEYWORD
 from core_lib.qt import messagebox
 from manager.settings_models import AccountSettings, AppearanceSettings, GeneralSettings
+from pages.plugins import PluginsDialog
 
 LANGUAGE_LABELS = {
     "en": "English",
@@ -201,9 +202,19 @@ class SettingsPage(QWidget):
             )
             scroll_layout.addWidget(button)
 
+        plugins_button = SettingsItem(tr("Plugins"), tr("Browse installed plugins"))
+        plugins_button.clicked.connect(self._open_plugins_dialog)
+        scroll_layout.addWidget(plugins_button)
         scroll_layout.addStretch()
         layout.addWidget(scroll_area)
         return page
+
+    def _open_plugins_dialog(self):
+        dialog = PluginsDialog(self.app, self.app.plugin_manager, self)
+        try:
+            dialog.exec()
+        finally:
+            dialog.deleteLater()
 
     def _create_general_page(self) -> QWidget:
         tr = self.app.tr_text
@@ -309,7 +320,9 @@ class SettingsPage(QWidget):
         brand_label.setObjectName("settingsBrand")
         version_label = QLabel(tr("Version: {version}", version=LAUNCHER_VERSION))
         version_label.setObjectName("settingsVersion")
-        description = QPlainTextEdit(LAUNCHER_DESCRIPTION)
+
+        description_text = self.app.tr_text(LAUNCHER_DESCRIPTION_KEYWORD)
+        description = QPlainTextEdit(description_text if description_text != LAUNCHER_DESCRIPTION_KEYWORD else LAUNCHER_DESCRIPTION)
         description.setObjectName("settingsDescription")
         description.setReadOnly(True)
 

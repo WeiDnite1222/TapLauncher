@@ -110,6 +110,12 @@ For `There is no profile is selected. Please create one first.`, create a profil
 For `Unable to load profile` or a missing profile-key error, back up the profile data before attempting repairs.
 Try creating a separate profile for the same game version to check whether the problem is limited to the original profile.
 
+### Account avatar shows Steve or Alex instead of a custom skin
+
+The launcher downloads account avatars from MCHeads and caches them locally. A cached default avatar can remain visible
+even after you change your skin. Wait a few minutes, then open the account page and click **Refresh avatar cache**
+(**重新整理頭像快取**) to download the avatars again. If the problem persists, check the launcher log for avatar download errors.
+
 ### Game closes immediately after launch
 
 Check the Minecraft Log window for the error preceding the exit message. An exit code alone does not identify the cause.
@@ -138,4 +144,4 @@ refresh tokens, and sign-in codes before sharing logs.
 - [ ] Add more custom settings.
 - [ ] Add a usage guide.
 - [ ] Add download mod from third party website support.
-- [ ] Add a simple plugin system, allows customizing launcher behavior such as adding a new page or button.
+- [X] Add a simple plugin system, allows customizing launcher behavior such as adding a new page or button.

@@ -14,7 +14,7 @@ from pathlib import Path
 import keyring
 from PySide6.QtCore import QObject, Signal, QThread, QTimer, QSize, Qt, Slot
 from PySide6.QtGui import QPixmap, QImage
-from PySide6.QtWidgets import QMessageBox
+from PySide6.QtWidgets import QMessageBox, QWidget
 from keyring.errors import KeyringError, PasswordDeleteError
 
 from constant import LAUNCHER_NAME, CLIENT_ID, ACCESS_TOKEN_KEYWORD, REFRESH_TOKEN_KEYWORD, SYSTEM_KEYRING_KEYWORD
@@ -365,6 +365,12 @@ class AccountManager(QObject):
     @staticmethod
     def _display_name(account: Account) -> str:
         return account.minecraft_name.strip() or account.username.strip() or "Unnamed Account"
+
+    def register_plugin_apis(self, plugin_manager):
+        plugin_manager.register_api("launcher.accounts.list", self.list_accounts)
+        plugin_manager.register_api("launcher.accounts.contains", self.contains)
+        plugin_manager.register_api("launcher.accounts.current_id", self.get_current_account_id)
+        plugin_manager.register_api("launcher.accounts.set_current", self.set_current_account)
 
     def list_accounts(self) -> list[AccountSummary]:
         """
@@ -1437,13 +1443,13 @@ class AccountManager(QObject):
         # background.
         return self.app.get_icon(Path(self.app.icon_dir, "head.png")).pixmap(size)
 
-    def request_account_head(self, account_id: str, username: str, size: int = 32) -> bool:
-        """Download and persist a missing account head without blocking the UI."""
+    def request_account_head(self, account_id: str, username: str, size: int = 32, *, force: bool = False) -> bool:
+        """Download an account head, optionally replacing a cached avatar."""
         if account_id in self._head_jobs or not username.strip():
             return False
 
         account = self.get_account(account_id)
-        if account is None or self.has_saved_head(account.avatar):
+        if account is None or (not force and self.has_saved_head(account.avatar)):
             return False
 
         request_size = min(256, max(32, int(size)))

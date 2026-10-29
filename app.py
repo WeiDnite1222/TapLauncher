@@ -5,6 +5,8 @@ from collections.abc import Mapping
 from pathlib import Path
 from typing import Callable
 
+from manager.plugins import PluginManager
+
 try:
     import tomllib
 except ModuleNotFoundError:  # Python 3.10
@@ -24,7 +26,7 @@ from manager.account import AccountManager
 from manager.game import GameManager
 from manager.profile import ProfileManager
 from manager.settings import SettingsManager
-from manager.settings_models import AccountSettings, AppearanceSettings, GeneralSettings
+from manager.settings_models import AccountSettings, AppearanceSettings, GeneralSettings, PluginSettings
 from manager.widgets import WidgetManager
 from window import LauncherMainWindow
 
@@ -68,6 +70,7 @@ class Launcher(QApplication, LauncherObject):
         self.settings_manager.register("general", GeneralSettings)
         self.settings_manager.register("appearance", AppearanceSettings)
         self.settings_manager.register("account", AccountSettings)
+        self.settings_manager.register("plugins", PluginSettings)
         if self.root_settings_dir.is_file():
             self.load_settings()
         else:
@@ -85,6 +88,9 @@ class Launcher(QApplication, LauncherObject):
         self.account_manager = AccountManager(self, self.widget_manager)
         self.game_manager = GameManager(self)
 
+        # Plugin manager
+        self.plugin_manager = PluginManager(self)
+
         # Window config
         self.setApplicationName("TapLauncher")
         self.main_window = LauncherMainWindow(
@@ -100,6 +106,23 @@ class Launcher(QApplication, LauncherObject):
         elif not icon_existing:
             self.logger.error("No icon found.")
 
+        # Load plugins
+        self.register_plugin_apis()
+
+    def register_plugin_apis(self):
+        for manager in (self.settings_manager, self.profile_manager, self.account_manager,
+                        self.game_manager, self.widget_manager):
+            manager.register_plugin_apis(self.plugin_manager)
+
+        for widget in (self.main_window,):
+            widget.register_plugin_apis(self.plugin_manager)
+
+        self.plugin_manager.register_api("launcher.app.set_reloadable_toolbutton_icon", self.set_reloadable_toolbutton_icon)
+        self.plugin_manager.register_api("launcher.app.paths", lambda: {
+            "work_dir": Path(self.work_dir),
+            "default_game_dir": Path(self.default_game_dir),
+        })
+        self.plugin_manager.register_api("launcher.app.tr_text", lambda text, **kwargs: self.tr_text(text, **kwargs))
 
     def exec(self):
         # init managers
@@ -108,6 +131,8 @@ class Launcher(QApplication, LauncherObject):
 
         self.main_window.show()
         self.main_window.toolbar.update_all()
+        # Restore plugins after profile/account data and host APIs are ready.
+        self.plugin_manager.signals.load_plugins.emit()
         self.exec_()
 
     def get_icon(self, path: Path, no_color_change: bool = False) -> QIcon:
@@ -199,24 +224,32 @@ class Launcher(QApplication, LauncherObject):
         return picture
 
     @property
-    def temp_dir(self):
+    def temp_dir(self) -> Path:
         return self.work_dir / "temp"
 
     @property
-    def config_dir(self):
+    def config_dir(self) -> Path:
         return self.work_dir / "config"
 
     @property
-    def data_dir(self):
+    def data_dir(self) -> Path:
         return self.work_dir / "data"
 
     @property
-    def log_dir(self):
+    def log_dir(self) -> Path:
         return self.work_dir / "log"
 
     @property
-    def root_settings_dir(self):
+    def root_settings_dir(self) -> Path:
         return self.data_dir / "settings.toml"
+
+    @property
+    def plugins_dir(self) -> Path:
+        return self.work_dir / "plugins"
+
+    @property
+    def internal_plugins_dir(self) -> Path:
+        return self.resources_dir / "builtin_plugins"
 
     @property
     def default_game_dir(self) -> Path:
@@ -224,15 +257,15 @@ class Launcher(QApplication, LauncherObject):
         return self.work_dir
 
     @property
-    def resources_dir(self):
+    def resources_dir(self) -> Path:
         return self.program_dir / "resources"
 
     @property
-    def icon_path(self):
+    def icon_path(self) -> Path:
         return self.resources_dir / "icons" / "icon.png"
 
     @property
-    def icon_dir(self):
+    def icon_dir(self) -> Path:
         return self.resources_dir / "icons"
 
     @property
@@ -240,7 +273,7 @@ class Launcher(QApplication, LauncherObject):
         return LAUNCHER_VERSION
 
     @property
-    def styles_path(self):
+    def styles_path(self) -> Path:
         return self.resources_dir / "styles"
 
     def locate_styles_path(self, relative_path: Path | str) -> Path:

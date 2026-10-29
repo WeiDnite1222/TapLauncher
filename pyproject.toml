@@ -1,6 +1,6 @@
 [project]
 name = "testlauncher"
-version = "0.0.9a0"
+version = "0.1.0a0"
 description = "A lightweight Minecraft launcher."
 readme = "README.md"
 requires-python = ">=3.10"

@@ -54,5 +54,9 @@ class TranslationManager(QObject):
 
     def translate(self, key: str, /, **values: Any) -> str:
         text = self._catalog.get(key, key)
+
+        if text == "<ORIGINAL>":
+            return key
+
         return text.format(**values) if values else text
 
