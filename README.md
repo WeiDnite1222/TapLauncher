@@ -114,7 +114,7 @@ Try creating a separate profile for the same game version to check whether the p
 
 The launcher downloads account avatars from MCHeads and caches them locally. A cached default avatar can remain visible
 even after you change your skin. Wait a few minutes, then open the account page and click **Refresh avatar cache**
-(**重新整理頭像快取**) to download the avatars again. If the problem persists, check the launcher log for avatar download errors.
+ to download the avatars again. If the problem persists, check the launcher log for avatar download errors.
 
 ### Game closes immediately after launch
 
