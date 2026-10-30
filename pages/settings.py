@@ -211,10 +211,9 @@ class SettingsPage(QWidget):
 
     def _open_plugins_dialog(self):
         dialog = PluginsDialog(self.app, self.app.plugin_manager, self)
-        try:
-            dialog.exec()
-        finally:
-            dialog.deleteLater()
+        dialog.setWindowFlags(Qt.Window)
+        dialog.setAttribute(Qt.WidgetAttribute.WA_DeleteOnClose, True)
+        dialog.show()
 
     def _create_general_page(self) -> QWidget:
         tr = self.app.tr_text

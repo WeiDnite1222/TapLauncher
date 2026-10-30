@@ -85,7 +85,7 @@ def test_invalid_theme_falls_back_to_default_styles(style_app):
     assert style_app.locate_styles_path(Path("main.qss")) == default
 
 
-@pytest.mark.parametrize("theme, background", [("aqua", "#f1f3f7"), ("windows-9x", "#c0c0c0"), ("bliss", "#ece9d8")])
+@pytest.mark.parametrize("theme, background", [("aqua", "#f1f3f7"), ("windows-9x", "#c0c0c0"), ("bliss", "#ece9d8"), ("it-looks-like-official-launcher", "#262626")])
 def test_message_boxes_follow_application_theme(style_app, theme, background):
     style_app.theme_dir = Path(__file__).resolve().parents[1] / "resources/themes" / theme
     style_app.apply_theme("custom")
@@ -146,7 +146,7 @@ def test_detailed_dialogs_inherit_aqua(style_app, monkeypatch, question):
     assert checked == [True]
 
 
-@pytest.mark.parametrize("theme, normal_color", [("aqua", "#626d7e"), ("windows-9x", "#404040"), ("bliss", "#555d69")])
+@pytest.mark.parametrize("theme, normal_color", [("aqua", "#626d7e"), ("windows-9x", "#404040"), ("bliss", "#555d69"), ("it-looks-like-official-launcher", "#b1b1b1")])
 @pytest.mark.parametrize("managed", [False, True])
 def test_profile_label_colors_follow_button_state(style_app, theme, normal_color, managed):
     root = Path(__file__).resolve().parents[1]

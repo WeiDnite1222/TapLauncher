@@ -1,0 +1,34 @@
+QWidget#settingsPage, QWidget#settingsMainPage, QWidget#settingsScrollContent {
+    background: #262626;
+}
+QScrollArea#settingsScrollArea { border: none; background: #262626; }
+QScrollArea#settingsScrollArea > QWidget > QWidget { background: #262626; }
+QLabel#settingsPageTitle { color: #ffffff; font-size: 20px; font-weight: bold; }
+QLabel#settingsSubPageTitle { color: #ffffff; font-size: 18px; font-weight: bold; }
+QPushButton#settingsItem {
+    min-height: 68px;
+    border: 1px solid #505050;
+    border-left: 4px solid #505050;
+    border-radius: 0;
+    background: #303030;
+    text-align: left;
+}
+QPushButton#settingsItem:hover { background: #3c3c3c; border-left-color: #6cc349; }
+QPushButton#settingsItem:pressed { background: #202020; }
+QPushButton#settingsItem:focus { border-color: #86d562; }
+QLabel#settingsItemTitle { color: #ffffff; font-size: 14px; font-weight: bold; }
+QLabel#settingsItemDescription, QLabel#settingsHelpText { color: #b1b1b1; font-size: 12px; }
+QPushButton#settingsBackButton { min-height: 0; padding: 0; border: none; border-radius: 0; font-size: 22px; }
+QPushButton#settingsBackButton:focus { border: 1px solid #86d562; }
+QLabel#settingsBrand { color: #ffffff; font-size: 20px; font-weight: bold; }
+QLabel#settingsVersion { color: #b1b1b1; font-size: 12px; }
+QPlainTextEdit#settingsDescription { font-size: 13px; }
+QWidget#settingsPage QComboBox {
+    min-height: 22px;
+    padding: 6px 32px 6px 10px;
+    border: 1px solid #505050;
+    border-radius: 0;
+    background: #181818;
+    color: #ffffff;
+}
+QWidget#settingsPage QComboBox:hover, QWidget#settingsPage QComboBox:focus { border-color: #86d562; }

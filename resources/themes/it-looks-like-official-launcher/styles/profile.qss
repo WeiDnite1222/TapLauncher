@@ -1,0 +1,38 @@
+QFrame#profileButton { background: #303030; border: 1px solid #505050; border-radius: 0; }
+QFrame#profileButton:hover { background: #3c3c3c; border-color: #86d562; }
+QLabel#profileName, QLabel#itemName { color: #ffffff; font-size: 16px; font-weight: bold; }
+QLabel#profileVersion, QLabel#itemVersion { color: #b1b1b1; font-size: 12px; }
+QLabel#profileArrow { color: #ffffff; background: transparent; font-size: 18px; }
+QLabel#launchStatus { color: #ffffff; font-size: 12px; font-weight: bold; }
+QFrame#profilePopup { background: #202020; border: 1px solid #505050; border-radius: 0; }
+QWidget#profileListContent { background: #202020; }
+QPushButton#profileItem {
+    min-height: 60px;
+    padding: 0;
+    background: #202020;
+    border: 1px solid transparent;
+    border-radius: 0;
+    text-align: left;
+}
+QPushButton#profileItem:hover { background: #3c8527; }
+QPushButton#profileItem:focus { border-color: #a0e081; }
+QPushButton#profileItem QLabel[itemHovered="true"] { color: #ffffff; background: transparent; }
+QPushButton#launchButton {
+    min-width: 150px;
+    min-height: 32px;
+    font-size: 18px;
+    font-weight: bold;
+    color: #ffffff;
+    background: #3c8527;
+    border: 2px solid #1d4d13;
+    border-top: 2px solid #86d562;
+    border-bottom: 5px solid #1d4d13;
+    border-radius: 0;
+}
+QPushButton#launchButton:hover { background: #4f9f30; }
+QPushButton#launchButton:pressed { background: #2f6b1f; border-top-color: #1d4d13; border-bottom-color: #3c8527; }
+QPushButton#launchButton:focus { border-left-color: #b5f293; border-right-color: #b5f293; }
+QPushButton#launchButton:disabled { background: #3c3c3c; color: #858585; border-color: #505050; }
+QFrame#profileFrame { background: #202020; border: 1px solid #505050; border-radius: 0; }
+QFrame#header { background: #202020; border-bottom: 1px solid #505050; }
+QLabel#headerLabel { color: #ffffff; background: transparent; font-size: 22px; font-weight: bold; }

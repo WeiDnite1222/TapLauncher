@@ -49,6 +49,31 @@ def plugin_dialog(tmp_path):
     qt_app.processEvents()
 
 
+def test_plugin_warning_is_translated_and_saved_once(plugin_dialog):
+    dialog = plugin_dialog
+    dialog.app.i18n.set_language("zh-TW")
+    messages = []
+    dialog.app.widget_manager.signal.show_warning_message.connect(messages.append)
+    dialog._show_plugin_warning()
+    dialog._show_plugin_warning()
+    assert len(messages) == 1
+    assert "可信來源" in messages[0]
+    dialog.app.settings_manager.load()
+    assert dialog.app.settings_manager.get("plugins", PluginSettings).is_plugin_warning_shown
+    dialog._show_plugin_warning()
+    assert len(messages) == 1
+
+
+def test_plugin_warning_save_failure_does_not_repeat(plugin_dialog, monkeypatch):
+    dialog = plugin_dialog
+    monkeypatch.setattr(dialog.app.settings_manager, "save", Mock(side_effect=OSError("read only")))
+    messages = []
+    dialog.app.widget_manager.signal.show_warning_message.connect(messages.append)
+    dialog._show_plugin_warning()
+    dialog._show_plugin_warning()
+    assert len(messages) == 1
+
+
 def test_search_filter_and_selection(plugin_dialog):
     dialog = plugin_dialog
     assert dialog.plugin_list.count() == 2

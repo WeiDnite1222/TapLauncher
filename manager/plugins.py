@@ -13,7 +13,7 @@ from importlib.machinery import ModuleSpec
 from importlib.util import spec_from_file_location
 from logging import Logger
 from pathlib import Path
-from typing import Callable
+from typing import Callable, Any
 
 from PySide6.QtCore import QObject, Signal
 
@@ -96,6 +96,42 @@ class PluginContext:
     show_info: Callable[[str], None]
     show_error: Callable[[str], None]
     on_cleanup: Callable[[Callable[[], None]], None]
+    override_api: Callable[[str, Callable], Callable[[], None]]
+
+class PluginHook:
+    """
+    A callable instance that used by plugin to calling the target API.
+    """
+    def __init__(self, name: str, target: Callable[..., Any]):
+        self.name = name
+        self._target = target
+        self._original_target = target
+        self._overrides: list[tuple[object, Callable]] = []
+
+    def __call__(self, *args: Any, **kwargs: Any) -> Any:
+        return self._target(*args, **kwargs)
+
+    def set_target(self, target: Callable[..., Any]) -> Callable[[], None]:
+        """Set/Override the target API."""
+        if not callable(target):
+            raise TypeError(f'Plugin API "{self.name}" must be callable.')
+
+        token = object()
+        self._overrides.append((token, target))
+        self._target = target
+
+        return lambda: self.restore(token)
+
+    def restore(self, token: object | None = None) -> None:
+        """Remove an override and restore the latest remaining target."""
+        if token is None:
+            if not self._overrides:
+                return
+
+            token = self._overrides[-1][0]
+
+        self._overrides = [entry for entry in self._overrides if entry[0] is not token]
+        self._target = self._overrides[-1][1] if self._overrides else self._original_target
 
 class PluginManager(QObject):
     def __init__(self, app):
@@ -105,6 +141,7 @@ class PluginManager(QObject):
         self.plugins: list[Plugin] = []
         self._apis: dict[str, Callable] = {}
         self._updating_plugin_state = False
+        self._hooks: dict[str, PluginHook] = {}
         self.register_api("launcher.apis.list", self.list_apis)
 
         self.signals = PluginManager.Signals()
@@ -320,7 +357,13 @@ class PluginManager(QObject):
             show_error=lambda message: self._show_error(f"[{plugin_id}] {message}"),
             on_cleanup=lambda callback: self._register_plugin_cleanup(plugin, callback),
             get_api=self.get_api,
+            override_api=lambda name, callback: self._override_plugin_api(plugin, name, callback),
         )
+
+    def _override_plugin_api(self, plugin: Plugin, name: str, callback: Callable) -> Callable[[], None]:
+        restore = self.override_api(name, callback)
+        self._register_plugin_cleanup(plugin, restore)
+        return restore
 
     @staticmethod
     def _register_plugin_cleanup(plugin: Plugin, callback: Callable[[], None]):
@@ -512,7 +555,7 @@ class PluginManager(QObject):
     #
     # API
     #
-    def register_api(self, name: str, callback: Callable):
+    def register_api(self, name: str, callback: Callable, overridable: bool = True):
         if not isinstance(name, str):
             raise TypeError("Plugin API name must be a string.")
         if not name or name != name.strip():
@@ -524,11 +567,42 @@ class PluginManager(QObject):
 
         self._apis[name] = callback
 
+        if overridable:
+            self._create_hook(name, callback)
+
+    def _create_hook(self, name: str, callback: Callable):
+        if not isinstance(name, str):
+            raise TypeError("Plugin API name must be a string.")
+
+        if not name or name != name.strip():
+            raise ValueError("Plugin API name must be non-empty and have no surrounding whitespace.")
+
+        if not callable(callback):
+            raise TypeError(f'Plugin API "{name}" must be callable.')
+
+        self._hooks[name] = PluginHook(name, callback)
+
+    def override_api(self, name: str, callback: Callable):
+        if not isinstance(name, str):
+            raise TypeError("Plugin API name must be a string.")
+
+        if name not in self._apis:
+            raise ValueError(f'Plugin API "{name}" is not registered.')
+
+        if name not in self._hooks:
+            raise ValueError(f'Plugin API "{name}" does not allow overrides.')
+
+        hook = self._hooks[name]
+        return hook.set_target(callback)
+
     def list_apis(self) -> tuple[str, ...]:
         return tuple(sorted(self._apis))
 
     def get_api(self, name: str) -> Callable:
         try:
+            if name in self._hooks:
+                return self._hooks[name]
+
             return self._apis[name]
         except KeyError:
             raise LookupError(f'Plugin API "{name}" is not available.') from None

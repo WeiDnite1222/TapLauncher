@@ -7,8 +7,8 @@ from PySide6.QtCore import QSize
 from PySide6.QtGui import QIcon, Qt, QPixmap, QAction
 from PySide6.QtWidgets import QApplication, QMainWindow, QLabel, QVBoxLayout, QWidget, QToolButton, \
     QStackedWidget
-from PySide6.QtCore import Slot
-from PySide6.QtWidgets import QMessageBox, QFileDialog
+from PySide6.QtCore import Slot, QThread
+from PySide6.QtWidgets import QMessageBox, QFileDialog, QInputDialog
 
 from core_lib.qt import messagebox
 from core_lib.qt.progress_dialog import ProgressDialog
@@ -528,4 +528,113 @@ class LauncherMainWindow(QMainWindow):
 
     def register_plugin_apis(self, plugin_manager):
         plugin_manager.register_api("launcher.window.add_toolbar_button", self.toolbar.add_button)
+        plugin_manager.register_api("launcher.window.add_page", self.plugin_add_page)
+        plugin_manager.register_api("launcher.window.replace_homepage", self.plugin_replace_homepage)
+        plugin_manager.register_api("launcher.ui.confirm", self.plugin_confirm)
+        plugin_manager.register_api("launcher.ui.prompt_text", self.plugin_prompt_text)
+        plugin_manager.register_api("launcher.ui.select_file", self.plugin_select_file)
+        plugin_manager.register_api("launcher.ui.select_directory", self.plugin_select_directory)
         self.manage_profile_page.register_plugin_apis(plugin_manager)
+
+    def plugin_replace_homepage(self, page: QWidget):
+        self._check_plugin_gui_thread()
+        if self.central.indexOf(page) >= 0:
+            raise ValueError("Homepage must be a new widget.")
+        if not hasattr(self, "_plugin_homepages"):
+            self._original_homepage = self.home_page
+            self._plugin_homepages = []
+        previous = self.home_page
+        self.central.addWidget(page)
+        self._plugin_homepages.append(page)
+        self.home_page = page
+        if self.central.currentWidget() is previous:
+            self.central.setCurrentWidget(page)
+        removed = False
+
+        def restore():
+            nonlocal removed
+            self._check_plugin_gui_thread()
+            if removed:
+                return
+            removed = True
+            self._plugin_homepages.remove(page)
+            self.home_page = (self._plugin_homepages[-1] if self._plugin_homepages
+                              else self._original_homepage)
+            if self.central.currentWidget() is page:
+                self.central.setCurrentWidget(self.home_page)
+            self.central.removeWidget(page)
+            page.hide()
+            page.deleteLater()
+
+        return restore
+
+    def plugin_add_page(self, title: str, page: QWidget, icon: QIcon = None):
+        self._check_plugin_gui_thread()
+        button = self.toolbar.add_button(title, icon)
+        button.setToolTip(title)
+        self.central.addWidget(page)
+        spacer_action = next(
+            action for action in self.toolbar.actions()
+            if self.toolbar.widgetForAction(action) is self.toolbar.spacer
+        )
+        action = self.toolbar.insertWidget(spacer_action, button)
+        def show_page():
+            self.set_current_page(page, button)
+            page.setFocus()
+
+        button.clicked.connect(show_page)
+        self.toolbar.update_all()
+        removed = False
+
+        def remove():
+            nonlocal removed
+            self._check_plugin_gui_thread()
+
+            if removed:
+                return
+
+            removed = True
+            if self.central.currentWidget() is page:
+                self.set_current_page(self.home_page, self.home_button)
+
+            self.central.removeWidget(page)
+            page.hide()
+            self.toolbar.removeAction(action)
+            action.deleteLater()
+            button.deleteLater()
+            page.deleteLater()
+
+        return remove
+
+    def _check_plugin_gui_thread(self):
+        if QThread.currentThread() != self.thread():
+            raise RuntimeError("Plugin GUI APIs must be called on the GUI thread.")
+
+    def plugin_confirm(self, title: str, message: str) -> bool:
+        self._check_plugin_gui_thread()
+        dialog = QMessageBox(self)
+        try:
+            dialog.setWindowTitle(title)
+            dialog.setTextFormat(Qt.TextFormat.PlainText)
+            dialog.setText(message)
+            dialog.setIcon(QMessageBox.Icon.Question)
+            dialog.setStandardButtons(QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No)
+            dialog.setDefaultButton(QMessageBox.StandardButton.No)
+            return dialog.exec() == QMessageBox.StandardButton.Yes
+        finally:
+            dialog.deleteLater()
+
+    def plugin_prompt_text(self, title: str, label: str, text: str = "") -> str | None:
+        self._check_plugin_gui_thread()
+        value, accepted = QInputDialog.getText(self, title, label, text=text)
+        return value if accepted else None
+
+    def plugin_select_file(self, title: str, directory: str = "", file_filter: str = "") -> Path | None:
+        self._check_plugin_gui_thread()
+        filename, _ = QFileDialog.getOpenFileName(self, title, directory, file_filter)
+        return Path(filename) if filename else None
+
+    def plugin_select_directory(self, title: str, directory: str = "") -> Path | None:
+        self._check_plugin_gui_thread()
+        selected = QFileDialog.getExistingDirectory(self, title, directory)
+        return Path(selected) if selected else None

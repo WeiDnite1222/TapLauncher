@@ -1,6 +1,6 @@
 from pathlib import Path
 
-from PySide6.QtCore import Qt, QSize, QUrl
+from PySide6.QtCore import Qt, QSize, QUrl, QTimer
 from PySide6.QtGui import QDesktopServices, QIcon, QPixmap, QMovie
 from PySide6.QtWidgets import (
     QWidget, QDialog, QVBoxLayout, QHBoxLayout, QLabel, QLineEdit,
@@ -9,6 +9,7 @@ from PySide6.QtWidgets import (
 )
 
 from manager.plugins import Plugin
+from manager.settings_models import PluginSettings
 
 
 class PluginsDialog(QDialog):
@@ -379,6 +380,23 @@ class PluginsDialog(QDialog):
         super().showEvent(event)
         for movie in self.icon_movies:
             movie.start()
+        QTimer.singleShot(0, self._show_plugin_warning)
+
+    def _show_plugin_warning(self):
+        settings_manager = self.app.settings_manager
+        settings = settings_manager.get("plugins", PluginSettings)
+        if settings.is_plugin_warning_shown:
+            return
+
+        settings_manager.set("plugins", settings.model_copy(update={"is_plugin_warning_shown": True}))
+        self.app.widget_manager.signal.show_warning_message.emit(self.app.tr_text(
+            "Plugins can run code on your computer and access your files and account data. "
+            "Only enable plugins from sources you trust."
+        ))
+        try:
+            settings_manager.save()
+        except OSError as error:
+            self.app.logger.warning("Failed to save plugin warning preference: %s", error)
 
     def hideEvent(self, event):
         for movie in self.icon_movies:
