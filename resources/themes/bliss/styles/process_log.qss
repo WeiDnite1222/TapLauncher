@@ -1,0 +1,8 @@
+QMainWindow { background: #ece9d8; }
+QLabel { color: #003399; }
+QPlainTextEdit { background: #ffffff; color: #000000; font-family: "Menlo", "Consolas", monospace; font-size: 10pt; border: 1px solid #7f9db9; border-radius: 4px; selection-background-color: #316ac5; selection-color: #ffffff; }
+QPushButton { padding: 4px 14px; min-height: 22px; border: 1px solid #003c74; border-radius: 3px; color: #000000; background: qlineargradient(x1:0,y1:0,x2:0,y2:1,stop:0 #ffffff,stop:0.45 #f5f3e9,stop:0.5 #e0ddce,stop:1 #faf9f3); }
+QPushButton:pressed { background: #a2c9f4; }
+QPushButton:disabled { color: #8590a0; }
+QScrollBar { background: #e7eaf0; border: 1px solid #b3bdcc; }
+QScrollBar::handle { background: #a4cff7; border: 1px solid #6e9bc9; border-radius: 6px; }

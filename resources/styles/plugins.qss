@@ -1,0 +1,51 @@
+QDialog#pluginsDialog {
+    background-color: palette(window);
+}
+
+QLabel#pluginsTitle, QLabel#pluginName {
+    font-size: 20px;
+    font-weight: bold;
+}
+
+QLabel#pluginsSectionTitle, QLabel#pluginsEmptyTitle {
+    font-size: 14px;
+    font-weight: bold;
+}
+
+QLabel#pluginsMuted {
+    color: palette(placeholder-text);
+}
+
+QListWidget#pluginList {
+    background-color: palette(base);
+    border: 1px solid palette(mid);
+    border-radius: 6px;
+    outline: none;
+}
+
+QListWidget#pluginList::item {
+    padding: 6px;
+    border-radius: 4px;
+}
+
+QListWidget#pluginList::item:selected {
+    background-color: palette(highlight);
+    color: palette(highlighted-text);
+}
+
+QListWidget#pluginList::item:focus {
+    border: 1px solid palette(highlight);
+}
+
+QDialog#pluginsDialog QLineEdit {
+    padding: 7px;
+    border: 1px solid palette(mid);
+    border-radius: 5px;
+    background-color: palette(base);
+    color: palette(text);
+}
+
+QDialog#pluginsDialog QSplitter::handle:horizontal {
+    width: 1px;
+    background-color: palette(mid);
+}
