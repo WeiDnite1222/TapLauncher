@@ -338,5 +338,6 @@
   "{account} is currently signed in.": "{account} is currently signed in.",
   "{account}'s session has expired.": "{account}'s session has expired.",
   "Plugins can run code on your computer and access your files and account data. Only enable plugins from sources you trust.": "Plugins can run code on your computer and access your files and account data. Only enable plugins from sources you trust.",
-  "$ABOUT_THIS_LAUNCHER": "<ORIGINAL>"
+  "$ABOUT_THIS_LAUNCHER": "<ORIGINAL>",
+  "$ABOUT_THIS_LAUNCHER_MARKDOWN": "<ORIGINAL>"
 }

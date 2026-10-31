@@ -16,5 +16,21 @@ Launcher while being more lightweight and easier to use.
 
 This launcher is not associated with Mojang Studios or Microsoft. Is a personal project that just for fun.
 """
+LAUNCHER_DESCRIPTION_MARKDOWN = \
+"""
+An unofficial Minecraft launcher written in Python.
+It aims to maintain maximum compatibility with the official Minecraft
+\n
+*This launcher is not associated with Mojang Studios or Microsoft. Is a personal project that just for fun.*
+\n\n
+### Credits
+- [PySide6](https://pypi.org/project/PySide6/): GUI framework
+- [Nuitka](https://nuitka.net/): Build tool
+- [Minecraft Wiki](https://minecraft.fandom.com/wiki/Main_Page): Account system and launcher development reference
+\n
+### Developer
+- [Wei](https://repo.weispace.net/wei): Main developer
+ """
 LAUNCHER_DESCRIPTION_KEYWORD = "$ABOUT_THIS_LAUNCHER"
-WHEEL_PLUGIN_API_VERSION = "0.0.1"
+LAUNCHER_DESCRIPTION_MARKDOWN_KEYWORD = "$ABOUT_THIS_LAUNCHER_MARKDOWN"
+WHEEL_PLUGIN_API_VERSION = "0.0.2"

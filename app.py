@@ -26,7 +26,7 @@ from manager.account import AccountManager
 from manager.game import GameManager
 from manager.profile import ProfileManager
 from manager.settings import SettingsManager
-from manager.settings_models import AccountSettings, AppearanceSettings, GeneralSettings, PluginSettings
+from manager.settings_models import AccountSettings, AppearanceSettings, GeneralSettings, PluginSettings, PageBarSettings
 from manager.widgets import WidgetManager
 from window import LauncherMainWindow
 
@@ -71,6 +71,7 @@ class Launcher(QApplication, LauncherObject):
         self.settings_manager.register("appearance", AppearanceSettings)
         self.settings_manager.register("account", AccountSettings)
         self.settings_manager.register("plugins", PluginSettings)
+        self.settings_manager.register("page-bar", PageBarSettings)
         if self.root_settings_dir.is_file():
             self.load_settings()
         else:

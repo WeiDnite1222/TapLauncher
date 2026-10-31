@@ -12,10 +12,11 @@ from PySide6.QtWidgets import (
     QPushButton,
     QStackedWidget,
     QVBoxLayout,
-    QWidget, QScrollArea, QSizePolicy, QSpinBox,
+    QWidget, QScrollArea, QSizePolicy, QSpinBox, QTextBrowser,
 )
 
-from constant import LAUNCHER_DESCRIPTION, LAUNCHER_NAME, LAUNCHER_VERSION, LAUNCHER_DESCRIPTION_KEYWORD
+from constant import LAUNCHER_NAME, LAUNCHER_VERSION, LAUNCHER_DESCRIPTION_KEYWORD, \
+    LAUNCHER_DESCRIPTION_MARKDOWN, LAUNCHER_DESCRIPTION_MARKDOWN_KEYWORD
 from core_lib.qt import messagebox
 from manager.settings_models import AccountSettings, AppearanceSettings, GeneralSettings
 from pages.plugins import PluginsDialog
@@ -320,10 +321,14 @@ class SettingsPage(QWidget):
         version_label = QLabel(tr("Version: {version}", version=LAUNCHER_VERSION))
         version_label.setObjectName("settingsVersion")
 
-        description_text = self.app.tr_text(LAUNCHER_DESCRIPTION_KEYWORD)
-        description = QPlainTextEdit(description_text if description_text != LAUNCHER_DESCRIPTION_KEYWORD else LAUNCHER_DESCRIPTION)
+        description_text = self.app.tr_text(LAUNCHER_DESCRIPTION_MARKDOWN_KEYWORD)
+        description = QTextBrowser()
         description.setObjectName("settingsDescription")
         description.setReadOnly(True)
+        description.setOpenExternalLinks(True)
+
+        data = description_text if description_text != LAUNCHER_DESCRIPTION_MARKDOWN_KEYWORD else LAUNCHER_DESCRIPTION_MARKDOWN
+        description.setMarkdown(data)
 
         page.content_layout.addWidget(brand_label)
         page.content_layout.addWidget(version_label)

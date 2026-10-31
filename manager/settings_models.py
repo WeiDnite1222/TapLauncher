@@ -79,3 +79,8 @@ class AccountSettings(WarnExtraModel):
 class PluginSettings(WarnExtraModel):
     enabled: list[str] = Field(default_factory=list)
     is_plugin_warning_shown: bool = False
+
+class PageBarSettings(WarnExtraModel):
+    focus_at_after_restart: bool = False
+    last_focused_page: str = ""
+    page_bar_position: Literal["left", "right", "top", "bottom"] = "left"

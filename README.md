@@ -30,6 +30,20 @@ uv run python main.py
 uv run python main.py --work-dir path_to_work_dir # With custom working directory
 ```
 
+### Build the project
+
+1. Install `uv` and sync the project with `uv sync`.
+2. Install platform-specific dependencies:
+   - macOS: Install Xcode Command Line Tools (`xcode-select --install`)
+   - Windows: MSVC Build Tools (https://visualstudio.microsoft.com/downloads/) or MinGW (https://www.mingw.org/)
+   - Linux: Install GCC and `patchelf` using your distribution's package manager.
+3. Build from source
+   - macOS: use `./build_macos.sh`.
+   - Windows: use `.\build_windows.ps1`.
+   - Linux: use `./build_linux.sh`.
+4. Check the `build` directory for the launcher executable. All necessary files should be put in `build/TapLauncher`
+   (On macOS is `build/TapLauncher.app/`).
+
 ### Themes
 
 You can customize the appearance of the launcher by adding a new theme to the `data/themes` under working directory.

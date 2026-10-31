@@ -3,7 +3,7 @@ from html import escape
 import sys
 
 from PySide6 import QtWidgets
-from PySide6.QtCore import QSize
+from PySide6.QtCore import QSize, Signal, QTimer
 from PySide6.QtGui import QIcon, Qt, QPixmap, QAction
 from PySide6.QtWidgets import QApplication, QMainWindow, QLabel, QVBoxLayout, QWidget, QToolButton, \
     QStackedWidget
@@ -14,6 +14,7 @@ from core_lib.qt import messagebox
 from core_lib.qt.progress_dialog import ProgressDialog
 from core_lib.qt.messagebox import ask_yes_no_with_plain_text
 from constant import MAIN_REPO_URL, LAUNCHER_VERSION, LAUNCHER_NAME, LAUNCHER_DESCRIPTION
+from manager.settings_models import PageBarSettings
 from manager.widgets import AskForRequest, SelectPathRequest
 from pages.account import AccountPage
 from pages.create_profile  import CreateProfilePage
@@ -22,12 +23,34 @@ from pages.manage_profile import ManageProfilePage
 from pages.test import TestPage
 from pages.settings import SettingsPage
 
+class PageButton(QToolButton):
+    def __init__(self, button_id: str, parent=None):
+        super().__init__(parent)
+        self.button_id = button_id
+        self.page = None
+        self.setCheckable(True)
+        self.setAutoExclusive(True)
+
+
 class ToolBar(QtWidgets.QToolBar):
+    PageButton = PageButton
+    position_changed = Signal()
+
     def __init__(self, app: QApplication, parent=None):
         super(ToolBar, self).__init__(parent)
         self.app = app
         self.spacer = QWidget()
         self.orientationChanged.connect(self._update_widget_size)
+
+        self.buttons: dict[str, PageButton] = {}
+        self._position_timer = QTimer(self)
+        self._position_timer.setSingleShot(True)
+        self._position_timer.timeout.connect(self.position_changed.emit)
+
+    def moveEvent(self, event):
+        super().moveEvent(event)
+        if hasattr(self, "_position_timer"):
+            self._position_timer.start(0)
 
     def _update_widget_size(self, orientation):
         vertical = orientation == Qt.Orientation.Vertical
@@ -43,8 +66,11 @@ class ToolBar(QtWidgets.QToolBar):
                 QtWidgets.QSizePolicy.Policy.Preferred,
             )
 
-        for button in self.findChildren(QToolButton):
-            if vertical:
+        for button in self.buttons.values():
+            button.setToolTip(button.text().strip())
+            button.setMinimumSize(0, 0)
+            button.setMaximumSize(16777215, 16777215)
+            if vertical and not button.icon().isNull():
                 button.setToolButtonStyle(
                     Qt.ToolButtonStyle.ToolButtonIconOnly
                 )
@@ -70,8 +96,13 @@ class ToolBar(QtWidgets.QToolBar):
                 )
                 button.setMinimumWidth(60)
 
-    def add_button(self, text=None, icon: QIcon=None) -> QToolButton:
-        button = QtWidgets.QToolButton(self)
+    def add_button(self, button_id: str, text=None,icon: QIcon=None) -> QToolButton:
+        if not isinstance(button_id, str) or not button_id.strip():
+            raise ValueError("Button id must be a non-empty string")
+        if button_id in self.buttons:
+            raise ValueError(f"Button id {button_id} already exists")
+
+        button = self.PageButton(button_id, self)
 
         if text:
             text = " "+text
@@ -94,12 +125,33 @@ class ToolBar(QtWidgets.QToolBar):
 
         button.setAutoRaise(True)
         button.setFixedHeight(60)
+        self.buttons[button_id] = button
 
         return button
+
+    def remove_button(self, button: PageButton):
+        if self.buttons.get(button.button_id) is button:
+            del self.buttons[button.button_id]
+        for action in self.actions():
+            if self.widgetForAction(action) is button:
+                self.removeAction(action)
+                action.deleteLater()
+        button.hide()
+        button.deleteLater()
 
     def update_all(self):
         self._update_widget_size(self.orientation())
         self.update()
+
+    def is_button_id_exist(self, button_id: str) -> bool:
+        return button_id in self.buttons
+
+    def focus_button(self, button_id: str):
+        if not self.is_button_id_exist(button_id):
+            return
+
+        self.buttons[button_id].click()
+        self.buttons[button_id].setFocus()
 
 class LauncherMainWindow(QMainWindow):
     def __init__(self, / ,app, parent: QWidget | None=None):
@@ -200,7 +252,7 @@ class LauncherMainWindow(QMainWindow):
 
         # Test Window btn
         if self.app.debug:
-            self.open_test_page = self.toolbar.add_button(" Tests")
+            self.open_test_page = self.toolbar.add_button("launcher.pagebutton.tests"," Tests")
             self.app.set_reloadable_toolbutton_icon(
                 self.open_test_page,
                 Path(self.app.icon_dir, "debug.png"),
@@ -208,30 +260,30 @@ class LauncherMainWindow(QMainWindow):
             self.open_test_page.setObjectName("open_test_page")
 
         # Launch profile btn
-        self.open_launch_profile_page = self.toolbar.add_button(" Launch Profile",
+        self.open_launch_profile_page = self.toolbar.add_button("launcher.pagebutton.launch_profile", "Launch Profile",
                                                                 icon=self.app.get_icon(Path(self.app.icon_dir, "profile_default.png"), True))
 
         # Home btn
-        self.home_button = self.toolbar.add_button(" Home")
+        self.home_button = self.toolbar.add_button("launcher.pagebutton.home"," Home")
         self.app.set_reloadable_toolbutton_icon(
             self.home_button,
             Path(self.app.icon_dir, "home.png"),
         )
 
         # Settings btn (will be moved to the bottom of the toolbar)
-        self.open_settings_page = self.toolbar.add_button(" Settings")
+        self.open_settings_page = self.toolbar.add_button("launcher.pagebutton.settings"," Settings")
         self.app.set_reloadable_toolbutton_icon(
             self.open_settings_page,
             Path(self.app.icon_dir, "settings.png"),
         )
 
         # Account btn (will be moved to the bottom (or last one item) of the toolbar
-        self.open_account_page = self.toolbar.add_button(" Accounts", icon=self.app.get_icon(Path(self.app.icon_dir, "head.png"), True))
+        self.open_account_page = self.toolbar.add_button("launcher.pagebutton.account"," Accounts", icon=self.app.get_icon(Path(self.app.icon_dir, "head.png"), True))
         self.account_page.set_related_button(self.open_account_page) # AccountPage require this to set button icon to
         # current account's avatar
 
         # Profile btn
-        self.open_create_profile_page = self.toolbar.add_button("Create Profile")
+        self.open_create_profile_page = self.toolbar.add_button("launcher.pagebutton.create_profile","Create Profile")
         self.app.set_reloadable_toolbutton_icon(
             self.open_create_profile_page,
             Path(self.app.icon_dir, "add.png"),
@@ -239,6 +291,7 @@ class LauncherMainWindow(QMainWindow):
 
         # manage profile
         self.open_manage_profile_page = self.toolbar.add_button(
+            "launcher.pagebutton.manage_profile",
             " Manage Profiles",
             icon=self.app.get_icon(Path(self.app.icon_dir, "profile_edit.png"), True),
         )
@@ -260,39 +313,28 @@ class LauncherMainWindow(QMainWindow):
         self.toolbar.addWidget(self.open_account_page)
 
         # Bind page-related button click event
-        self.home_button.clicked.connect(
-            lambda: self.set_current_page(self.home_page, self.home_button)
-        )
+        self.bind_page_button(self.home_button, self.home_page)
 
         if self.app.debug:
-            self.open_test_page.clicked.connect(
-                lambda: self.set_current_page(self.test_page, self.open_test_page)
-            )
+            self.bind_page_button(self.open_test_page, self.test_page)
 
-        self.open_launch_profile_page.clicked.connect(
-            lambda: self.set_current_page(self.launch_profile_page, self.open_launch_profile_page)
-        )
+        self.bind_page_button(self.open_launch_profile_page, self.launch_profile_page)
 
-        self.open_settings_page.clicked.connect(
-            lambda: self.set_current_page(self.settings_page, self.open_settings_page)
-        )
+        self.bind_page_button(self.open_settings_page, self.settings_page)
 
-        self.open_account_page.clicked.connect(
-            lambda: self.set_current_page(self.account_page, self.open_account_page)
-        )
+        self.bind_page_button(self.open_account_page, self.account_page)
 
-        self.open_create_profile_page.clicked.connect(
-            lambda: self.set_current_page(self.create_profile_page, self.open_create_profile_page)
-        )
+        self.bind_page_button(self.open_create_profile_page, self.create_profile_page)
 
-        self.open_manage_profile_page.clicked.connect(
-            lambda: self.set_current_page(self.manage_profile_page, self.open_manage_profile_page)
-        )
+        self.bind_page_button(self.open_manage_profile_page, self.manage_profile_page)
+
+        # Apply page bar settings
+        self.apply_page_bar_settings()
+        self.toolbar.position_changed.connect(self.save_page_bar_position)
 
         # Bind signal event
         self.bind_event()
 
-        self.set_current_page(self.home_page, self.home_button)
         self.app.i18n.language_changed.connect(self.retranslate_ui)
         self.retranslate_ui()
 
@@ -408,9 +450,23 @@ class LauncherMainWindow(QMainWindow):
             content=content,
         )
 
-    def set_current_page(self, page: QWidget, related_button: QToolButton):
+    def set_current_page(self, page: QWidget, related_button: PageButton, *, persist=True):
+        if self.central.indexOf(page) < 0:
+            raise ValueError("Page is not registered")
         self.central.setCurrentWidget(page)
+        related_button.setChecked(True)
         related_button.setFocus()
+        if not persist:
+            return
+        self._pending_page_button = None
+
+        try:
+            settings = self.app.settings_manager.get("page-bar", PageBarSettings).model_dump()
+            settings["last_focused_page"] = related_button.button_id
+            self.app.settings_manager.set("page-bar", settings)
+            self.app.settings_manager.save()
+        except Exception as e:
+            self.app.logger.exception(e)
 
     def bind_event(self):
         download_signal = self.widget_manager.download_signal
@@ -527,6 +583,7 @@ class LauncherMainWindow(QMainWindow):
         help_menu.addAction(about_action)
 
     def register_plugin_apis(self, plugin_manager):
+        plugin_manager.register_api("launcher.window.add_page_button", self.plugin_add_page)
         plugin_manager.register_api("launcher.window.add_toolbar_button", self.toolbar.add_button)
         plugin_manager.register_api("launcher.window.add_page", self.plugin_add_page)
         plugin_manager.register_api("launcher.window.replace_homepage", self.plugin_replace_homepage)
@@ -568,22 +625,23 @@ class LauncherMainWindow(QMainWindow):
 
         return restore
 
-    def plugin_add_page(self, title: str, page: QWidget, icon: QIcon = None):
+    def plugin_add_page(self, button_id: str, title: str, page: QWidget, icon: QIcon = None):
         self._check_plugin_gui_thread()
-        button = self.toolbar.add_button(title, icon)
+        if self.central.indexOf(page) >= 0:
+            raise ValueError("Page is already registered")
+        button = self.toolbar.add_button(button_id, title, icon)
         button.setToolTip(title)
         self.central.addWidget(page)
         spacer_action = next(
             action for action in self.toolbar.actions()
             if self.toolbar.widgetForAction(action) is self.toolbar.spacer
         )
-        action = self.toolbar.insertWidget(spacer_action, button)
-        def show_page():
-            self.set_current_page(page, button)
-            page.setFocus()
-
-        button.clicked.connect(show_page)
+        self.toolbar.insertWidget(spacer_action, button)
+        self.bind_page_button(button, page)
         self.toolbar.update_all()
+        if getattr(self, "_pending_page_button", None) == button_id:
+            self.set_current_page(page, button, persist=False)
+            self._pending_page_button = None
         removed = False
 
         def remove():
@@ -599,9 +657,7 @@ class LauncherMainWindow(QMainWindow):
 
             self.central.removeWidget(page)
             page.hide()
-            self.toolbar.removeAction(action)
-            action.deleteLater()
-            button.deleteLater()
+            self.toolbar.remove_button(button)
             page.deleteLater()
 
         return remove
@@ -638,3 +694,42 @@ class LauncherMainWindow(QMainWindow):
         self._check_plugin_gui_thread()
         selected = QFileDialog.getExistingDirectory(self, title, directory)
         return Path(selected) if selected else None
+
+    def apply_page_bar_settings(self):
+        settings = self.app.settings_manager.get("page-bar", PageBarSettings)
+        self.addToolBar(self.page_bar_areas[settings.page_bar_position], self.toolbar)
+        self.toolbar.update_all()
+        focus = settings.focus_at_after_restart or settings.last_focused_page
+        self._pending_page_button = focus
+        button = self.toolbar.buttons.get(focus, self.home_button)
+        self.set_current_page(button.page, button, persist=False)
+
+    page_bar_areas = {
+        "left": Qt.ToolBarArea.LeftToolBarArea,
+        "right": Qt.ToolBarArea.RightToolBarArea,
+        "top": Qt.ToolBarArea.TopToolBarArea,
+        "bottom": Qt.ToolBarArea.BottomToolBarArea,
+    }
+
+    def save_page_bar_position(self):
+        if self.toolbar.isFloating():
+            return
+        area = self.toolBarArea(self.toolbar)
+        position = next((name for name, value in self.page_bar_areas.items() if value == area), None)
+        if position is None:
+            return
+        try:
+            settings = self.app.settings_manager.get("page-bar", PageBarSettings).model_dump()
+            if settings["page_bar_position"] == position:
+                return
+            settings["page_bar_position"] = position
+            self.app.settings_manager.set("page-bar", settings)
+            self.app.settings_manager.save()
+        except Exception as error:
+            self.app.logger.exception(error)
+
+    def bind_page_button(self, button: PageButton, page: QWidget):
+        button.page = page
+        button.clicked.connect(lambda: self.set_current_page(
+            self.home_page if button is self.home_button else button.page, button
+        ))

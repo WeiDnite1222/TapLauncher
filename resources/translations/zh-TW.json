@@ -338,5 +338,6 @@
   "minutes": "分鐘",
   "{account} is currently signed in.": "{account} 目前已登入。",
   "{account}'s session has expired.": "{account} 的工作階段已過期。",
-  "$ABOUT_THIS_LAUNCHER": "一個使用Python編寫的非官方 Minecraft 啟動器。旨在與官方啟動器保持最大程度的兼容，同時更加輕量且易於使用。\n\n本啟動器和 Mojang 工作室 或 Microsoft 沒有任何隸屬關係。只是一個為了好玩而開開發的專案。"
+  "$ABOUT_THIS_LAUNCHER": "一個使用Python編寫的非官方 Minecraft 啟動器。旨在與官方啟動器保持最大程度的兼容，同時更加輕量且易於使用。\n\n本啟動器和 Mojang 工作室 或 Microsoft 沒有任何隸屬關係。只是一個為了好玩而開開發的專案。",
+  "$ABOUT_THIS_LAUNCHER_MARKDOWN": "一個使用Python編寫的非官方 Minecraft 啟動器。\n旨在與官方啟動器保持最大程度的兼容，同時更加輕量且易於使用。\n\\n\n*本啟動器和 Mojang 工作室 或 Microsoft 沒有任何隸屬關係。只是一個為了好玩而開開發的專案。*\n\\n\\n\n### 鳴謝\n- [PySide6](https://pypi.org/project/PySide6/): GUI 框架\n- [Nuitka](https://nuitka.net/): 構建工具\n- [Minecraft Wiki](https://minecraft.fandom.com/wiki/Main_Page): 帳號系統和啟動器開發參考\n\\n\n### 開發者\n- [Wei](https://repo.weispace.net/wei): 主要開發者"
 }
