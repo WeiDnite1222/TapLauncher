@@ -53,17 +53,25 @@ QToolBar:right QToolButton {
 QToolBar QPushButton:hover,
 QToolBar QToolButton:hover {
     background-color: palette(midlight);
+    color: palette(button-text);
 }
 
 QToolBar QPushButton:focus,
 QToolBar QToolButton:focus {
+    background-color: palette(midlight);
+    color: palette(button-text);
     border-bottom: 2px solid palette(highlight);
 }
 
 QToolBar QPushButton:pressed,
-QToolBar QToolButton:pressed,
+QToolBar QToolButton:pressed {
+    background-color: palette(highlight);
+    color: palette(highlighted-text);
+}
+
 QToolBar QToolButton:checked {
-    background-color: palette(dark);
+    background-color: palette(highlight);
+    color: palette(highlighted-text);
 }
 
 QToolBar QPushButton:disabled,

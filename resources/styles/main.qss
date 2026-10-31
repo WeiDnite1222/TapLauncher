@@ -10,6 +10,131 @@
 
 /* Add your QSS styles here */
 
+QPushButton {
+    background-color: palette(button);
+    color: palette(button-text);
+    border: 1px solid palette(mid);
+    border-radius: 4px;
+    padding: 6px 10px;
+}
+
+QPushButton:hover {
+    background-color: palette(midlight);
+    color: palette(button-text);
+}
+
+QPushButton:focus {
+    border-color: palette(highlight);
+}
+
+QPushButton:pressed,
+QPushButton:checked {
+    background-color: palette(highlight);
+    color: palette(highlighted-text);
+}
+
+QPushButton:disabled {
+    background-color: palette(button);
+    color: palette(placeholder-text);
+}
+
+QComboBox {
+    background-color: palette(base);
+    color: palette(text);
+    border: 1px solid palette(mid);
+    border-radius: 4px;
+    padding: 4px 24px 4px 8px;
+    selection-background-color: palette(highlight);
+    selection-color: palette(highlighted-text);
+}
+
+QComboBox:focus {
+    border-color: palette(highlight);
+}
+
+QComboBox::drop-down {
+    width: 20px;
+    background: transparent;
+    border: none;
+}
+
+QComboBox QAbstractItemView,
+QComboBox QLineEdit {
+    background-color: palette(base);
+    color: palette(text);
+    selection-background-color: palette(highlight);
+    selection-color: palette(highlighted-text);
+}
+
+/* Scrollbars follow the active theme palette. */
+QScrollBar:vertical,
+QScrollBar:horizontal {
+    background: palette(alternate-base);
+    border: none;
+    border-radius: 6px;
+    margin: 0;
+    padding: 2px;
+}
+
+QScrollBar:vertical {
+    width: 12px;
+}
+
+QScrollBar:horizontal {
+    height: 12px;
+}
+
+QScrollBar::handle:vertical,
+QScrollBar::handle:horizontal {
+    background: palette(mid);
+    border: none;
+    border-radius: 4px;
+}
+
+QScrollBar::handle:vertical {
+    min-height: 32px;
+}
+
+QScrollBar::handle:horizontal {
+    min-width: 32px;
+}
+
+QScrollBar::handle:vertical:hover,
+QScrollBar::handle:horizontal:hover {
+    background: palette(placeholder-text);
+}
+
+QScrollBar::handle:vertical:pressed,
+QScrollBar::handle:horizontal:pressed {
+    background: palette(highlight);
+}
+
+QScrollBar::add-line:vertical,
+QScrollBar::sub-line:vertical {
+    height: 0;
+    border: none;
+    background: transparent;
+}
+
+QScrollBar::add-line:horizontal,
+QScrollBar::sub-line:horizontal {
+    width: 0;
+    border: none;
+    background: transparent;
+}
+
+QScrollBar::add-page:vertical,
+QScrollBar::sub-page:vertical,
+QScrollBar::add-page:horizontal,
+QScrollBar::sub-page:horizontal {
+    background: transparent;
+}
+
+QAbstractScrollArea::corner {
+    background: palette(window);
+    border: none;
+}
+
 QLabel#dev_info_box {
     font-size: 20pt;
     font-weight: bold;
@@ -25,4 +150,49 @@ QLabel#version_label, QLabel#version_label {
 
 QLabel#icon_label {
     border-radius: 20px;
+}
+
+/* Modrinth follows the plugin list and details layout. */
+QWidget#modrinthPage QLabel#modrinthTitle {
+    font-size: 20px;
+    font-weight: bold;
+}
+
+QWidget#modrinthPage QLabel#modrinthSectionTitle {
+    font-size: 14px;
+    font-weight: bold;
+}
+
+QWidget#modrinthPage QLabel#modrinthMuted {
+    color: palette(placeholder-text);
+}
+
+QListWidget#modrinthResults {
+    background-color: palette(base);
+    border: 1px solid palette(mid);
+    border-radius: 6px;
+    outline: none;
+}
+
+QListWidget#modrinthResults::item {
+    padding: 6px;
+    border-radius: 4px;
+}
+
+QListWidget#modrinthResults::item:selected {
+    background-color: palette(highlight);
+    color: palette(highlighted-text);
+}
+
+QWidget#modrinthPage QLineEdit {
+    padding: 7px;
+    border: 1px solid palette(mid);
+    border-radius: 5px;
+    background-color: palette(base);
+    color: palette(text);
+}
+
+QWidget#modrinthPage QSplitter::handle:horizontal {
+    width: 1px;
+    background-color: palette(mid);
 }

@@ -4,12 +4,44 @@ import shlex
 
 from core_lib.common.exception import VersionDataKeyNotFoundException, DependencyException
 from core_lib.game.library import parse_maven_coordinate, generate_repo_url, \
-    is_complete_maven_url
+    is_complete_maven_url, filter_platform_libraries
 from core_lib.game.libraryx import convert_maven_version_with_extra, generate_unique_library_key, \
-    normalize_library_to_common_struct
+    normalize_library_to_common_struct, compare_library_versions, LibraryPreference, PREFER_MOD_LIBRARY, \
+    PREFER_INHERITS_LIBRARY, PREFER_BY_HIGHER_VERSION, deduplicate_libraries
 from core_lib.game.version_info import MOJANG_LIBRARIES_ENDPOINT
 
 logger = logging.getLogger("Launcher.CoreLib")
+
+LOADER_LIBRARY_MARKERS = {
+    ("net.fabricmc", "fabric-loader"): "fabric",
+    ("org.quiltmc", "quilt-loader"): "quilt",
+    ("net.minecraftforge", "forge"): "forge",
+    ("net.neoforged", "neoforge"): "neoforge",
+    ("net.neoforged", "forge"): "neoforge",
+}
+
+
+def detect_loader_name(manifest: dict) -> str | None:
+    candidates = set()
+
+    for library in manifest.get("libraries", []):
+        name = library.get("name", "")
+        parts = name.split(":")
+
+        if len(parts) < 3:
+            continue
+
+        loader_name = LOADER_LIBRARY_MARKERS.get(
+            (parts[0], parts[1])
+        )
+        if loader_name:
+            candidates.add(loader_name)
+
+    # Return None if no loader is found or multiple loaders are found.
+    if len(candidates) != 1:
+        return None
+
+    return next(iter(candidates))
 
 def find_useful_part_in_mod_version_manifest(mod_version_manifest: dict):
     ver_id = mod_version_manifest.get("id", None)
@@ -61,8 +93,9 @@ def find_useful_part_in_mod_version_manifest(mod_version_manifest: dict):
     }
 
 
-def merge_necessary_dependencies(inherits_libraries: list, mod_libraries: list, mod_maven_url=None,
-                                 inherits_maven_url=MOJANG_LIBRARIES_ENDPOINT, default_extension="jar") -> list[dict]:
+def merge_necessary_dependencies(inherits_libraries: list, mod_libraries: list, inherits_maven_url=MOJANG_LIBRARIES_ENDPOINT,
+                                 mod_maven_url=None, default_extension="jar",
+                                 prefer_libraries_by: LibraryPreference = PREFER_MOD_LIBRARY) -> list[dict]:
 
     inherits = {}
     result_pre = []
@@ -72,43 +105,70 @@ def merge_necessary_dependencies(inherits_libraries: list, mod_libraries: list, 
     inherits_libraries = deepcopy(inherits_libraries)
     mod_libraries = deepcopy(mod_libraries)
 
-    def check_lib(lib: dict):
-        url: str = lib.get("url", "")
-        source_from = lib["sourceFrom"]
-        lib_group=lib["parsed"]["group"]
-        lib_artifact=lib["parsed"]["artifact"]
-        lib_version=lib["parsed"]["versionRaw"]
-        lib_classifier=lib["parsed"]["classifier"]
-        lib_extension=lib["parsed"]["extension"]
+    # Filter platform (natives) libraries
+    inherits_libraries = filter_platform_libraries(inherits_libraries)
+    mod_libraries = filter_platform_libraries(mod_libraries)
 
-        recreated = False
+    preference = LibraryPreference(prefer_libraries_by)
 
-        if not url:
-            if source_from == "official":
-                new_url = generate_repo_url(inherits_maven_url, lib_group, lib_artifact, lib_version, lib_classifier,
-                                            lib_extension)
-            else:
-                new_url = generate_repo_url(mod_maven_url, lib_group, lib_artifact, lib_version, lib_classifier,
-                                            lib_extension)
+    # Remove duplicate libraries
+    inherits_libraries = deduplicate_libraries(
+        inherits_libraries,
+        preference,
+        default_extension,
+    )
+    mod_libraries = deduplicate_libraries(
+        mod_libraries,
+        preference,
+        default_extension,
+    )
 
-            lib["url"] = new_url
-
-            recreated = True
-
-        if not recreated:
-            url_result = is_complete_maven_url(url, lib_group, lib_artifact, lib_version, lib_classifier, lib_extension)
-
-            if not url_result:
-                # deal with some weird maven url that don't contain repo path
-                # Some mod loader (such as fabric), did not contain a full path inside the library. We will need to
-                # generate it from maven coordinate (aka lib_name)
-                target_maven = mod_maven_url or url
-                repo_url = generate_repo_url(target_maven, lib_group, lib_artifact, lib_version, lib_classifier,
-                                            lib_extension)
-                lib["url"] = repo_url
+    # def check_lib(lib: dict):
+    #     url: str = lib.get("url", "")
+    #     source_from = lib["sourceFrom"]
+    #     lib_group=lib["parsed"]["group"]
+    #     lib_artifact=lib["parsed"]["artifact"]
+    #     lib_version=lib["parsed"]["versionRaw"]
+    #     lib_classifier=lib["parsed"]["classifier"]
+    #     lib_extension=lib["parsed"]["extension"]
+    #     lib_downloads = lib["downloads"]
+    #
+    #     recreated = False
+    #
+    #     if not url:
+    #         artifact_url = lib_downloads.get("artifact", {}).get("url", "")
+    #         is_completed = is_complete_maven_url(artifact_url, lib_group, lib_artifact, lib_version, lib_classifier, lib_extension)
+    #
+    #         if is_completed:
+    #             lib["url"] = artifact_url
+    #         else:
+    #             if source_from == "official":
+    #                 new_url = generate_repo_url(inherits_maven_url, lib_group, lib_artifact, lib_version,
+    #                                             lib_classifier,
+    #                                             lib_extension)
+    #             else:
+    #                 new_url = generate_repo_url(mod_maven_url, lib_group, lib_artifact, lib_version, lib_classifier,
+    #                                             lib_extension)
+    #
+    #             lib["url"] = new_url
+    #
+    #         recreated = True
+    #
+    #     if not recreated:
+    #         url_result = is_complete_maven_url(url, lib_group, lib_artifact, lib_version, lib_classifier, lib_extension)
+    #
+    #         if not url_result:
+    #             # deal with some weird maven url that don't contain srepo path
+    #             # Some mod loader (such as fabric), did not contain a full path inside the library. We will need to
+    #             # generate it from maven coordinate (aka lib_name)
+    #             target_maven = url or mod_maven_url
+    #             repo_url = generate_repo_url(target_maven, lib_group, lib_artifact, lib_version, lib_classifier,
+    #                                         lib_extension)
+    #             lib["url"] = repo_url
 
     for library in inherits_libraries:
-        name = library.get("name", None)
+        name: str | None = library.get("name", None)
+        downloads = library.get("downloads", {})
 
         if not name:
             raise DependencyException(
@@ -116,15 +176,16 @@ def merge_necessary_dependencies(inherits_libraries: list, mod_libraries: list, 
             )
 
         group, artifact, version_raw, classifier, extension = parse_maven_coordinate(name, default_extension=default_extension)
-        ver_converted, extra = convert_maven_version_with_extra(version_raw)
 
-        if extra:
-            logger.debug("Found extra version \"{}\" for library {}".format(extra, name))
-
-        if not ver_converted:
-            raise DependencyException(
-                f"Unable to convert provided inherited library name {name}'s version {version_raw} to tuple."
-            )
+        # ver_converted, extra = convert_maven_version_with_extra(version_raw)
+        #
+        # if extra:
+        #     logger.debug("Found extra version \"{}\" for library {}".format(extra, name))
+        #
+        # if not ver_converted:
+        #     raise DependencyException(
+        #         f"Unable to convert provided inherited library name {name}'s version {version_raw} to tuple."
+        #     )
 
         lib_key = generate_unique_library_key(
             group=group,
@@ -139,12 +200,12 @@ def merge_necessary_dependencies(inherits_libraries: list, mod_libraries: list, 
             inherits[lib_key]["parsed"] = {
                 "group": group,
                 "artifact": artifact,
-                "version": ver_converted,
+                "version": version_raw,
                 "versionRaw": version_raw,
-                "versionExtra": extra,
                 "classifier": classifier,
                 "extension": extension,
-                "endpoint": inherits_maven_url
+                "endpoint": inherits_maven_url,
+                "downloads": downloads,
             }
             inherits[lib_key]["sourceFrom"] = "official"
         else:
@@ -152,23 +213,22 @@ def merge_necessary_dependencies(inherits_libraries: list, mod_libraries: list, 
 
     for mod_library in mod_libraries:
         name = mod_library.get("name", None)
+        downloads = mod_library.get("downloads", {})
 
         if not name:
             raise DependencyException(
                 "Provided mod library does not contain key \"name\"."
             )
 
-        group, artifact, version_raw, classifier, extension = parse_maven_coordinate(name, default_extension=default_extension)
-
-        ver_converted, extra = convert_maven_version_with_extra(version_raw)
-
-        if extra:
-            logger.debug("Found extra version \"{}\" for library {}".format(extra, name))
-
-        if ver_converted is None:
-            raise DependencyException(
-                "Unable to convert mod library version {} to tuple".format(version_raw),
-            )
+        # ver_converted, extra = convert_maven_version_with_extra(version_raw)
+        #
+        # if extra:
+        #     logger.debug("Found extra version \"{}\" for library {}".format(extra, name))
+        #
+        # if ver_converted is None:
+        #     raise DependencyException(
+        #         "Unable to convert mod library version {} to tuple".format(version_raw),
+        #     )
 
         group, artifact, version_raw, classifier, extension = parse_maven_coordinate(name, default_extension=default_extension)
         lib_key = generate_unique_library_key(
@@ -183,34 +243,37 @@ def merge_necessary_dependencies(inherits_libraries: list, mod_libraries: list, 
             "group": group,
             "artifact": artifact,
             # "version": {"raw": version, "converted": ver_converted, "extra": extra},
-            "version": ver_converted,
+            "version": version_raw,
             "versionRaw": version_raw,
-            "versionExtra": extra,
             "classifier": classifier,
             "extension": extension,
             "endpoint": mod_maven_url,
+            "downloads": downloads,
         }
 
         if lib_key in inherits:
             found_lib = inherits.pop(lib_key)
             found_lib_ver = found_lib["parsed"]["version"]
-            found_lib_ver_extra = found_lib["parsed"]["versionExtra"]
 
             if found_lib_ver is None:
                 raise DependencyException(
                     "Unable to convert mod library version {} to tuple".format(found_lib["versionRaw"])
                 )
 
-            if found_lib_ver > ver_converted:
-                result_pre.append(found_lib)
-            elif found_lib_ver < ver_converted:
-                result_pre.append(mod_library)
+            if preference  in (PREFER_MOD_LIBRARY, PREFER_INHERITS_LIBRARY,):
+                selected = mod_library if preference  == PREFER_MOD_LIBRARY else found_lib
             else:
-                # Use mod loader library if extra version is existing
-                if found_lib_ver_extra == mod_library["parsed"]["versionExtra"]:
-                    result_pre.append(found_lib)
-                else:
-                    result_pre.append(mod_library)
+                comparison = compare_library_versions(
+                    found_lib["parsed"]["versionRaw"],
+                    mod_library["parsed"]["versionRaw"],
+                )
+
+                if preference == PREFER_BY_HIGHER_VERSION:
+                    selected = found_lib if comparison > 0 else mod_library
+                else:  # PREFER_BY_LOWER_VERSION
+                    selected = found_lib if comparison < 0 else mod_library
+
+            result_pre.append(selected)
         else:
             result_pre.append(mod_library)
 
@@ -220,13 +283,24 @@ def merge_necessary_dependencies(inherits_libraries: list, mod_libraries: list, 
         result_pre.append(value)
 
     for library in result_pre:
-        # Cleanup
-        check_lib(library)
-        library_normalized = normalize_library_to_common_struct(library, default_maven_url=library["parsed"]["endpoint"])
+        # Check library download url
+        endpoint = library["parsed"]["endpoint"] # maven url
+        artifact_url = ((library.get("downloads") or {}).get("artifact") or {}).get("url")
 
+        if not artifact_url and not library.get("url") and not endpoint:
+            raise DependencyException(
+                f"No download source for library {library['name']!r}."
+            )
+
+        library_normalized = normalize_library_to_common_struct(
+            library,
+            default_maven_url=endpoint,
+            default_extension=default_extension
+        )
+
+        # Cleanup and append
         library_normalized.pop("parsed", None)
         library_normalized.pop("sourceFrom", None)
-        library_normalized.pop("endpoint", None)
         result.append(library_normalized)
 
     return result
@@ -262,7 +336,8 @@ def merge_game_and_jvm_args(inherits_args: dict[str, list[str]] | str, mod_args:
 
     return merged
 
-def merge_manifest(inherits_version_manifest: dict, mod_version_manifest: dict, mod_maven_url=None) -> dict:
+def merge_manifest(inherits_version_manifest: dict, mod_version_manifest: dict, mod_maven_url=None,
+    *, prefer_libraries_by: LibraryPreference = PREFER_MOD_LIBRARY) -> dict:
     merged_manifest = deepcopy(inherits_version_manifest)
 
     # main class
@@ -281,8 +356,12 @@ def merge_manifest(inherits_version_manifest: dict, mod_version_manifest: dict, 
             "Inherited (or mod) version manifest does not contain key \"libraries\"."
         )
 
-    merged_manifest["libraries"] = merge_necessary_dependencies(inherits_libraries, mod_libraries,
-                                                                mod_maven_url=mod_maven_url)
+    merged_manifest["libraries"] = merge_necessary_dependencies(
+        inherits_libraries,
+        mod_libraries,
+        mod_maven_url=mod_maven_url,
+        prefer_libraries_by=prefer_libraries_by
+    )
 
     # arguments
     inherits_arguments = inherits_version_manifest.get("arguments", []) or inherits_version_manifest.get("minecraftArguments", "")

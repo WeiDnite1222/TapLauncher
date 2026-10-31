@@ -140,6 +140,20 @@ def is_library_allowed(rules, platform_rule_name, platform_arch_type, platform_v
 
     return allowed
 
+def filter_platform_libraries(libraries: list[dict]) -> list[dict]:
+    _, _, os_version = get_platform_info()
+    _, platform_rule_name, platform_arch_type = get_natives_platform_info()
+
+    return [
+        library
+        for library in libraries
+        if is_library_allowed(
+            library.get("rules") or [],
+            platform_rule_name,
+            platform_arch_type,
+            os_version,
+        )
+    ]
 
 def get_natives_platform_info():
     """
@@ -277,7 +291,8 @@ def is_legacy_native_allowed(natives, classifiers, platform_rule_name, platform_
     return False, None, None
 
 
-def generate_relative_path_by_maven_coordinate(maven_coordinate: str, extra=None) -> str | None:
+def generate_relative_path_by_maven_coordinate(maven_coordinate: str, extra=None,
+                                                extension: str = "jar") -> str | None:
     parts = maven_coordinate.split(":")
 
     if len(parts) not in (3, 4):
@@ -293,7 +308,7 @@ def generate_relative_path_by_maven_coordinate(maven_coordinate: str, extra=None
     if classifier:
         filename += f"-{classifier}"
 
-    return f"{base_path}/{artifact}/{version}/{filename}.jar"
+    return f"{base_path}/{artifact}/{version}/{filename}.{extension}"
 
 
 def remove_duplicate_artifacts(artifacts: list[dict], ignore_null=False, compare_by_name=False) -> list[dict]:

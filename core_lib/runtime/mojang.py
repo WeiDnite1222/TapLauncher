@@ -12,7 +12,7 @@ import requests
 
 from ..common.common import get_platform_info, FileObject, download_multiple_files
 from ..common.exception import RuntimeManifestFetchException, UnsupportedPlatformException, \
-    RuntimeManifestDataException, HashMismatchException, DownloadException, LauncherException
+    RuntimeManifestDataException, DownloadException, LauncherException
 from ..game.version_info import RUNTIME_PLATFORM_MAP, RUNTIME_ARCH_EMPTY, RUNTIME_ARCH_MAP
 
 MOJANG_RUNTIME_MANIFEST = "https://launchermeta.mojang.com/v1/products/java-runtime/2ec0cc96c44e5a76b9c8b7c39df7210883d12871/all.json"

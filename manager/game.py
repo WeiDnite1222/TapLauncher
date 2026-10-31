@@ -8,7 +8,7 @@ import threading
 import time
 import traceback
 from collections.abc import Callable
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from pathlib import Path
 from threading import Thread
 from typing import Literal
@@ -21,7 +21,8 @@ from core_lib.common.exception import JavaRuntimeException
 from core_lib.game.argument import ArgumentMappings, generate_launch_command
 from core_lib.game.asset import check_assets_exist, download_assets, find_correct_assets_dir
 from core_lib.game.library_core import check_full_libraries_exists, download_full_libraries, generate_classpath
-from core_lib.game.mod.mod_core import merge_manifest
+from core_lib.game.mod.mod_core import merge_manifest, PREFER_MOD_LIBRARY, detect_loader_name
+from core_lib.game.mod.rules import MOD_LOADER_RULES
 from core_lib.game.version_info import fetch_and_save_version_manifest, get_specific_version_manifest_url_and_hash, \
     save_version_manifest, find_useful_part_in_specific_version_manifest, download_core_file, get_latest_version, \
     LATEST_VERSION_ALIASES, check_core_file_exists_and_verify, validate_version_manifest
@@ -230,7 +231,13 @@ class ManifestManager:
 
         manifest_path = self.get_specific_version_manifest_path(version_id)
 
-        # Read custom (or mod loader) manifest first. If not exist, get manifest from official data
+        if manifest_path is None:
+            self.widget_mgr.signal.show_error_message.emit(
+                f"Version manifest not found: {version_id}"
+            )
+            return None
+
+        # Read the custom (or mod loader) manifest first. If not exist, get manifest from official data
         if manifest_path.is_file():
             manifest = self._read_cached_version_manifest(version_id)
         else:
@@ -239,9 +246,9 @@ class ManifestManager:
         if not manifest:
             return None
 
-        parent_id = manifest.get("inheritsFrom")
+        parent_id: str | None = manifest.get("inheritsFrom")
 
-        # Return if the version don't need to merge manifest
+        # Return if the version doesn't need to merge manifest
         if not parent_id:
             return self.ResolvedVersionManifest(
                 manifest=manifest,
@@ -249,17 +256,32 @@ class ManifestManager:
                 client_version_id=version_id,
             )
 
-        # Get inherits if needed
+        # Get the parent manifest if needed
         parent = self.resolve_manifest(parent_id, visited)
 
         if parent is None:
             return None
 
         try:
+            # TODO: Get absolute loader name with a reliable method. Not guess it.
+            loader_name = detect_loader_name(manifest)
+
+            if loader_name is None:
+                self.widget_mgr.signal.show_error_message.emit(
+                    f"Unable to detect loader name for version {version_id}"
+                )
+                return None
+
+            rules = MOD_LOADER_RULES.get(loader_name, {})
+
             # Merge official and loader manifest
             merged = merge_manifest(
                 inherits_version_manifest=parent.manifest,
                 mod_version_manifest=manifest,
+                prefer_libraries_by=rules.get(
+                    "preferLibraryBy",
+                    PREFER_MOD_LIBRARY,
+                )
             )
         except Exception as exc:
             self.widget_mgr.signal.show_error_message.emit(
@@ -524,7 +546,7 @@ class JavaManager:
             errors: list[Path]
         """
         discovered, errors = self.discover_runtimes(extra_install_patterns)
-        retained = [runtime for runtime in self.runtimes if runtime.source != "system"]
+        retained = [runtime for runtime in self.list_runtimes() if runtime.source != "system"]
         by_executable = {runtime.executable.resolve(): runtime for runtime in retained}
 
         for runtime in discovered:
@@ -544,7 +566,13 @@ class JavaManager:
 
         for runtime in self.runtimes:
             if runtime.executable.resolve() == candidate:
-                return runtime
+                updated = self.inspect_runtime(
+                    candidate, source=runtime.source, component=runtime.component,
+                    runtime_id=runtime.id,
+                )
+                self.runtimes = [updated if item.id == runtime.id else item for item in self.runtimes]
+                self.save_runtimes()
+                return updated
 
         runtime = self.inspect_runtime(candidate, source="custom")
         self.runtimes.append(runtime)
@@ -611,7 +639,7 @@ class JavaManager:
         if not self.runtimes:
             self.refresh_runtimes()
 
-        return [runtime.to_dict() for runtime in self.runtimes]
+        return [runtime.to_dict() for runtime in self.list_runtimes() if runtime.valid]
 
     def get_support_runtime_jvm_executable(self, major_version: int | str, no_error: bool=False) -> str | None:
         runtime = self.resolve_runtime(major_version=int(major_version))
@@ -628,6 +656,12 @@ class JavaManager:
     def list_runtimes(self, *, refresh: bool = False) -> list[JavaRuntime]:
         if refresh:
             self.refresh_runtimes()
+        # A runtime can be removed or restored while the launcher is open.
+        # JavaRuntime is immutable, so replace stale snapshots before exposing them.
+        self.runtimes = [
+            replace(runtime, valid=runtime.executable.is_file())
+            for runtime in self.runtimes
+        ]
         return list(self.runtimes)
 
     @staticmethod
@@ -642,7 +676,7 @@ class JavaManager:
         for runtime in runtimes:
             executable = runtime.executable
 
-            if not executable.exists():
+            if not executable.is_file():
                 errors.append(runtime)
 
         return errors
@@ -657,7 +691,7 @@ class JavaManager:
 
         runtimes = self.list_runtimes()
         errors = self.check_runtimes(runtimes)
-        if not runtimes or errors:
+        if errors or not any(item.valid and item.major_version == int(required_major) for item in runtimes):
             if errors:
                 self.widget_mgr.signal.show_plain_error_text.emit(
                     {

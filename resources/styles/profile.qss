@@ -56,6 +56,29 @@ QPushButton#launchButton {
     min-width: 150px;
     font-size: 15px;
     font-weight: 600;
+    background-color: palette(button);
+    color: palette(button-text);
+    border: 1px solid palette(mid);
+    border-radius: 5px;
+    padding: 6px 14px;
+}
+
+QPushButton#launchButton:hover {
+    background-color: palette(midlight);
+    color: palette(button-text);
+}
+
+QPushButton#launchButton:focus {
+    border-color: palette(highlight);
+}
+
+QPushButton#launchButton:pressed {
+    background-color: palette(highlight);
+    color: palette(highlighted-text);
+}
+
+QPushButton#launchButton:disabled {
+    color: palette(placeholder-text);
 }
 
 QLabel#headerLabel {
