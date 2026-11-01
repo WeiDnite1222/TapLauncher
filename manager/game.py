@@ -10,6 +10,7 @@ import traceback
 from collections.abc import Callable
 from dataclasses import dataclass, field, replace
 from pathlib import Path
+from tempfile import TemporaryDirectory
 from threading import Thread
 from typing import Literal
 from uuid import uuid4
@@ -17,15 +18,16 @@ from PySide6.QtCore import QObject, Signal
 
 from constant import CLIENT_ID, LAUNCHER_VERSION
 from core_lib.common.common import FileObject, download_multiple_files
-from core_lib.common.exception import JavaRuntimeException
+from core_lib.common.exception import JavaRuntimeException, LoaderInstallError
 from core_lib.game.argument import ArgumentMappings, generate_launch_command
 from core_lib.game.asset import check_assets_exist, download_assets, find_correct_assets_dir
 from core_lib.game.library_core import check_full_libraries_exists, download_full_libraries, generate_classpath
+from core_lib.game.mod import forge_like
 from core_lib.game.mod.mod_core import merge_manifest, PREFER_MOD_LIBRARY, detect_loader_name
 from core_lib.game.mod.rules import MOD_LOADER_RULES
 from core_lib.game.version_info import fetch_and_save_version_manifest, get_specific_version_manifest_url_and_hash, \
     save_version_manifest, find_useful_part_in_specific_version_manifest, download_core_file, get_latest_version, \
-    LATEST_VERSION_ALIASES, check_core_file_exists_and_verify, validate_version_manifest
+    LATEST_VERSION_ALIASES, check_core_file_exists_and_verify, validate_version_manifest, validate_minecraft_version
 from core_lib.runtime.java import find_java_installations, get_java_version
 from core_lib.runtime.mojang import download_java_runtimes, fetch_runtime_manifest, get_current_platform_runtime_key
 from manager.account import AccountManager, LaunchAccount
@@ -50,6 +52,7 @@ class ManifestManager:
         # Flags
         self.use_expired_manifest = False
         self._manifest_prompt_lock = threading.Lock()
+        self._manifest_rebuild_lock = threading.Lock()
 
     #
     # ============ Version Data Cache ============
@@ -60,6 +63,98 @@ class ManifestManager:
 
     def get_specific_version_manifest_path(self, target_version: str) -> Path | None:
         return Path(self.app.work_dir, "versions", target_version, f"{target_version}.json")
+
+    def _manifest_rebuild_text(self, text: str, **values) -> str:
+        translate = getattr(self.app, "tr_text", None)
+        return translate(text, **values) if callable(translate) else text.format(**values)
+
+    def _get_manifest_backup_path(self, version_id: str) -> Path:
+        if not validate_minecraft_version(version_id):
+            raise ValueError("Invalid version ID: {}".format(version_id))
+        root = Path(self.app.work_dir).resolve()
+        path = root / "cache" / "version_manifests" / "{}.json".format(version_id)
+        if not path.resolve().is_relative_to(root):
+            raise ValueError("Manifest backup path is outside the launcher directory.")
+        return path
+
+    def backup_version_manifest(self, version_id: str, payload: bytes | None = None) -> None:
+        """Keep verified manifest bytes for recovery, including custom loader metadata."""
+        try:
+            backup = self._get_manifest_backup_path(version_id)
+            if payload is None:
+                source = self.get_specific_version_manifest_path(version_id)
+                if source is None:
+                    raise ValueError("Version manifest path is unavailable")
+                root = Path(self.app.work_dir).resolve() / "versions"
+                if not source.resolve().is_relative_to(root):
+                    raise ValueError("Version manifest path is outside the versions directory")
+                payload = source.read_bytes()
+            validate_version_manifest(json.loads(payload.decode("utf-8")), version_id)
+            if backup.is_file() and backup.read_bytes() == payload:
+                return
+            save_version_manifest(payload, backup)
+        except Exception as exc:
+            # An optional recovery copy must not turn a successful read/install into failure.
+            self.app.logger.warning("Unable to back up manifest %s: %s", version_id, exc)
+
+    def rebuild_missing_version_manifest(self, version_id: str) -> dict | None:
+        """Ask before restoring a missing manifest; download known vanilla versions if needed."""
+        with self._manifest_rebuild_lock:
+            try:
+                backup = self._get_manifest_backup_path(version_id)
+                path = self.get_specific_version_manifest_path(version_id)
+                root = Path(self.app.work_dir).resolve() / "versions"
+                if path is None or not path.resolve().is_relative_to(root):
+                    raise ValueError("Version manifest path is outside the versions directory")
+                # Another launch may have completed recovery while this one waited.
+                if path.is_file():
+                    return self._read_cached_version_manifest(version_id)
+
+                request = AskForRequest(
+                    self._manifest_rebuild_text("Missing version manifest"),
+                    self._manifest_rebuild_text(
+                        "The manifest for version {version} is missing. Rebuild it now?", version=version_id,
+                    ),
+                )
+                request.details = str(path)
+                self.widget_mgr.signal.askyesno.emit(request)
+                if not request.wait(120):
+                    self.widget_mgr.signal.show_error_message.emit(self._manifest_rebuild_text(
+                        "Timed out while waiting to rebuild the version manifest."
+                    ))
+                    return None
+                if request.result() is not True:
+                    return None
+
+                if path.is_file():
+                    return self._read_cached_version_manifest(version_id)
+
+                if backup.is_file():
+                    try:
+                        payload = backup.read_bytes()
+                        validate_version_manifest(json.loads(payload.decode("utf-8")), version_id)
+                    except (OSError, ValueError) as exc:
+                        self.app.logger.warning("Ignoring invalid manifest backup %s: %s", backup, exc)
+                    else:
+                        return save_version_manifest(payload, path)
+
+                root_manifest = self.get_cached_version_manifest()
+                if root_manifest is None:
+                    return None
+                if any(item.get("id") == version_id for item in root_manifest.get("versions", [])):
+                    return self.get_cached_version_manifest(version_id)
+
+                self.widget_mgr.signal.show_error_message.emit(self._manifest_rebuild_text(
+                    "No valid backup is available for {version}. Reinstall this mod-loader version "
+                    "or restore its custom manifest, then try launching again.", version=version_id,
+                ))
+                return None
+            except Exception as exc:
+                self.app.logger.exception("Unable to rebuild version manifest %s", version_id)
+                self.widget_mgr.signal.show_error_message.emit(self._manifest_rebuild_text(
+                    "Unable to rebuild the manifest for {version}: {error}", version=version_id, error=str(exc),
+                ))
+                return None
 
     def switch_between_specific_path(self, specified_ver: str | None = None):
         if specified_ver is None:
@@ -75,6 +170,8 @@ class ManifestManager:
                 self.switch_between_specific_path(specified_ver),
                 target_version=specified_ver, root_manifest=root_manifest,
             )
+            if specified_ver is not None:
+                self.backup_version_manifest(specified_ver)
             return True, data
         except Exception as exc:
             self.app.logger.warning("Unable to refresh version manifest: %s", exc)
@@ -85,6 +182,7 @@ class ManifestManager:
             data, sha1 = fetch_manifest_handler(version_id)
             validate_version_manifest(data, version_id)
             save_version_manifest(data, self.get_specific_version_manifest_path(version_id), sha1=sha1)
+            self.backup_version_manifest(version_id)
             return True, data
         except Exception as exc:
             self.app.logger.warning("Unable to refresh custom manifest %s: %s", version_id, exc)
@@ -101,6 +199,8 @@ class ManifestManager:
                 raise ValueError("Cached manifest SHA-1 does not match")
             data = json.loads(payload.decode("utf-8"))
             validate_version_manifest(data, specified_ver)
+            if specified_ver is not None:
+                self.backup_version_manifest(specified_ver, payload)
             return data
         except (OSError, ValueError) as exc:
             self.app.logger.warning("Ignoring invalid cached manifest %s: %s", path, exc)
@@ -218,7 +318,8 @@ class ManifestManager:
         version_id: str
         client_version_id: str
 
-    def resolve_manifest(self, version_id: str, visited: set[str] | None = None) -> ResolvedVersionManifest | None:
+    def resolve_manifest(self, version_id: str, visited: set[str] | None = None, *,
+                         allow_rebuild: bool = False) -> ResolvedVersionManifest | None:
         visited = set() if visited is None else visited
 
         if version_id in visited:
@@ -240,6 +341,8 @@ class ManifestManager:
         # Read the custom (or mod loader) manifest first. If not exist, get manifest from official data
         if manifest_path.is_file():
             manifest = self._read_cached_version_manifest(version_id)
+        elif allow_rebuild:
+            manifest = self.rebuild_missing_version_manifest(version_id)
         else:
             manifest = self.get_cached_version_manifest(version_id)
 
@@ -257,21 +360,14 @@ class ManifestManager:
             )
 
         # Get the parent manifest if needed
-        parent = self.resolve_manifest(parent_id, visited)
+        parent = self.resolve_manifest(parent_id, visited, allow_rebuild=allow_rebuild)
 
         if parent is None:
             return None
 
         try:
-            # TODO: Get absolute loader name with a reliable method. Not guess it.
             loader_name = detect_loader_name(manifest)
-
-            if loader_name is None:
-                self.widget_mgr.signal.show_error_message.emit(
-                    f"Unable to detect loader name for version {version_id}"
-                )
-                return None
-
+            # Untagged legacy and custom manifests use the default merge policy.
             rules = MOD_LOADER_RULES.get(loader_name, {})
 
             # Merge official and loader manifest
@@ -771,10 +867,11 @@ class GameFileDownloadRequest(SignalTransferItem):
         self.args: tuple = args
 
 class GameFileManager:
-    def __init__(self, app, manifest_manager: ManifestManager):
+    def __init__(self, app, manifest_manager: ManifestManager, java_mgr: JavaManager):
         self.app = app
         self.widget_mgr = app.widget_manager
         self.manifest_mgr = manifest_manager
+        self.java_mgr = java_mgr
         self.jobs = {
             "download_client": self.download_client,
             "download_libraries": self.download_libraries,
@@ -1008,6 +1105,154 @@ class GameFileManager:
 
         return False, pending
 
+    def install_forge_like_version(
+            self,
+            loader_name: Literal["forge", "neoforge"],
+            minecraft_version: str,
+            loader_version: str,
+            *,
+            progress_callback: Callable[[str, float], None] | None = None,
+            status_callback: Callable[[str], None] | None = None,
+            error_callback: Callable[[str, str], None] | None = None,
+    ) -> tuple[dict | None, dict | None]:
+        """
+        Install Forge or NeoForge and save the verified loader manifest.
+        :param loader_name:
+        :param minecraft_version:
+        :param loader_version: Full Maven version from the loader version list.
+        :param progress_callback:
+        :param status_callback: Receives the current installation stage.
+        :param error_callback: Receives the failed stage and traceback instead of a global error dialog.
+        :return:
+            vanilla_manifest: dict | None
+            loader_manifest: dict | None
+        """
+        task_id = None
+        stage = "validating installation request"
+
+        def update_stage(value: str):
+            nonlocal stage
+            stage = value
+            if status_callback is not None:
+                status_callback(stage)
+
+        try:
+            update_stage("validating installation request")
+            if loader_name not in ("forge", "neoforge"):
+                raise LoaderInstallError("Unsupported loader: {}".format(loader_name))
+
+            if not validate_minecraft_version(minecraft_version):
+                raise LoaderInstallError("Invalid Minecraft version: {}".format(minecraft_version))
+
+            if progress_callback is None:
+                progress_callback, task_id = self.manifest_mgr.create_download_progress_callback(
+                    "Installing {} {}".format(loader_name, loader_version)
+                )
+
+            # Get the parent manifest before preparing the loader.
+            update_stage("loading the vanilla manifest")
+            vanilla = self.manifest_mgr.get_cached_version_manifest(minecraft_version)
+            if vanilla is None:
+                raise LoaderInstallError("Unable to load the vanilla manifest.")
+
+            root = Path(self.app.work_dir).resolve()
+            libraries_dir = root / "libraries"
+            client_jar = root / "versions" / minecraft_version / "{}.jar".format(minecraft_version)
+
+            update_stage("preparing the installer")
+            with TemporaryDirectory(prefix="forge-install-") as temporary:
+                plan = forge_like.prepare_installer(
+                    loader_name, loader_version, Path(temporary),
+                    minecraft_version=minecraft_version,
+                    progress_callback=progress_callback,
+                )
+
+                version_id = plan.version_id
+                if not isinstance(version_id, str) or not re.fullmatch(
+                        r"[A-Za-z0-9][A-Za-z0-9._+\-]*", version_id):
+                    raise LoaderInstallError("Invalid loader version ID: {}".format(version_id))
+
+                validate_version_manifest(plan.version_manifest, version_id)
+                if plan.version_manifest.get("inheritsFrom") != minecraft_version or version_id == minecraft_version:
+                    raise LoaderInstallError("Loader manifest does not inherit from the expected Minecraft version.")
+
+                # Resolve Java using the combined vanilla and loader manifest.
+                update_stage("preparing Java runtime")
+                merged = merge_manifest(vanilla, plan.version_manifest)
+                runtime = self.java_mgr.ensure_runtime(
+                    merged, auto_install=True,
+                    progress_callback=progress_callback,
+                    redownload_callback=self.redownload_files,
+                )
+
+                update_stage("downloading the Minecraft client")
+                if not check_core_file_exists_and_verify(vanilla, client_jar):
+                    # Keep client progress and its original errors in this installation task.
+                    download_core_file(
+                        vanilla, client_jar, raise_for_null_hash=True,
+                        progress_callback=progress_callback,
+                    )
+
+                update_stage("copying embedded artifacts")
+                forge_like.copy_embedded_artifacts(plan, libraries_dir)
+
+                update_stage("downloading installer dependencies")
+                files = forge_like.collect_install_dependencies(plan, libraries_dir)
+                failures, _ = download_multiple_files(files, progress_callback=progress_callback)
+                if failures:
+                    success, failures = self.redownload_files(failures)
+                    if not success or failures:
+                        raise LoaderInstallError("Unable to download installer dependencies.")
+
+                update_stage("running installer processors")
+                forge_like.run_processors(
+                    plan, libraries_dir, java_path=runtime.executable,
+                    minecraft_jar=client_jar, minecraft_root=root,
+                    progress_callback=progress_callback,
+                )
+
+                update_stage("verifying installed artifacts")
+                if not forge_like.check_forge_dependencies(plan.version_manifest, libraries_dir):
+                    raise LoaderInstallError("Installed artifacts failed verification.")
+
+                manifest = plan.version_manifest
+                manifest["loader"] = loader_name
+                update_stage("cleaning installer workspace")
+
+            # Publish only the verified loader manifest, including forgeInstall.
+            update_stage("saving the loader manifest")
+            validate_version_manifest(manifest, version_id)
+            destination = self.manifest_mgr.get_specific_version_manifest_path(version_id)
+            if destination is None:
+                raise LoaderInstallError("Unable to locate the manifest path for {}".format(version_id))
+
+            destination = Path(destination).resolve()
+            if not destination.is_relative_to(root / "versions"):
+                raise LoaderInstallError("Loader manifest path is outside the versions directory.")
+
+            saved_manifest = save_version_manifest(manifest, destination)
+            self.manifest_mgr.backup_version_manifest(version_id)
+        except Exception as e:
+            message = "Unable to install {} {} for Minecraft {} while {}:\n{}".format(
+                loader_name, loader_version, minecraft_version, stage, e,
+            )
+            self.app.logger.exception(message)
+
+            if task_id is not None:
+                self.widget_mgr.download_signal.failed.emit(task_id, message)
+
+            if error_callback is not None:
+                error_callback(stage, traceback.format_exc())
+            else:
+                self.widget_mgr.signal.show_error_message.emit(message)
+            return None, None
+        else:
+            if task_id is not None:
+                self.widget_mgr.download_signal.finished.emit(task_id)
+
+            return vanilla, saved_manifest
+
+
 @dataclass
 class LaunchResult:
     process: subprocess.Popen | None = None
@@ -1066,7 +1311,7 @@ class LaunchManager:
                 return result.fail("Unable to resolve the correct version id of the profile.")
 
             # Version manifest
-            resolved = self.manifest_mgr.resolve_manifest(version_id)
+            resolved = self.manifest_mgr.resolve_manifest(version_id, allow_rebuild=True)
 
             if resolved is None:
                 return result.fail(
@@ -1188,6 +1433,7 @@ class LaunchManager:
                 launcher_name="TestLauncher",
                 launcher_version=LAUNCHER_VERSION,
                 classpath=classpath,
+                client_jar_name=core_file_path.name,
                 classpath_separator=os.pathsep,
                 library_directory=libraries_dir.as_posix(),
                 resolution=profile.resolution
@@ -1390,7 +1636,7 @@ class GameManager(QObject):
         self.widget_mgr = app.widget_manager
         self.manifest = ManifestManager(self.app)
         self.java = JavaManager(self.app)
-        self.game_file = GameFileManager(self.app, manifest_manager=self.manifest)
+        self.game_file = GameFileManager(self.app, manifest_manager=self.manifest, java_mgr=self.java)
         self.launch = LaunchManager(self.app, self.manifest,
                                     self.java, self.game_file, self.account_manager, self.profile_mgr)
 

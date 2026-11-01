@@ -62,3 +62,58 @@ QLabel#version_label { font-weight: bold; }
 QMessageBox { background: #262626; }
 QMessageBox QLabel { color: #ffffff; background: transparent; }
 QMessageBox QPushButton { min-width: 72px; }
+
+/* Square, inset tracks and raised handles match the launcher's buttons. */
+QScrollBar:vertical, QScrollBar:horizontal {
+    background: #181818;
+    border: 1px solid #414141;
+    border-radius: 0;
+    margin: 0;
+    padding: 2px;
+}
+QScrollBar:vertical { width: 14px; }
+QScrollBar:horizontal { height: 14px; }
+QScrollBar::handle:vertical, QScrollBar::handle:horizontal {
+    background: #595959;
+    border: 1px solid #737373;
+    border-top-color: #858585;
+    border-left-color: #858585;
+    border-bottom-color: #303030;
+    border-right-color: #303030;
+    border-radius: 0;
+}
+QScrollBar::handle:vertical { min-height: 32px; }
+QScrollBar::handle:horizontal { min-width: 32px; }
+QScrollBar::handle:vertical:hover, QScrollBar::handle:horizontal:hover {
+    background: #737373;
+    border-top-color: #a0a0a0;
+    border-left-color: #a0a0a0;
+}
+QScrollBar::handle:vertical:pressed, QScrollBar::handle:horizontal:pressed {
+    background: #3c8527;
+    border: 1px solid #6cc349;
+    border-top-color: #28591a;
+    border-left-color: #28591a;
+}
+QScrollBar::handle:vertical:disabled, QScrollBar::handle:horizontal:disabled {
+    background: #303030;
+    border: 1px solid #414141;
+}
+QScrollBar::add-line:vertical, QScrollBar::sub-line:vertical {
+    height: 0;
+    border: none;
+    background: transparent;
+}
+QScrollBar::add-line:horizontal, QScrollBar::sub-line:horizontal {
+    width: 0;
+    border: none;
+    background: transparent;
+}
+QScrollBar::add-page:vertical, QScrollBar::sub-page:vertical,
+QScrollBar::add-page:horizontal, QScrollBar::sub-page:horizontal {
+    background: transparent;
+}
+QAbstractScrollArea::corner {
+    background: #181818;
+    border: 1px solid #414141;
+}

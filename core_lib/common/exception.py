@@ -148,3 +148,14 @@ class ArgumentError(LauncherException):
 
 class ArgumentValueError(ArgumentError):
     user_message = "An invalid argument value was provided."
+
+class LoaderUnsupportedSpecificVersion(LauncherException):
+    user_message = "Loader does not support specific version."
+
+    def __init__(self, loader_name: str, target_version: str):
+        self.loader_name = loader_name
+        self.target_version = target_version
+        super().__init__(f"{loader_name} does not support Minecraft {target_version}.")
+
+class LoaderInstallError(LauncherException):
+    user_message = "An error occurred while installing loader."

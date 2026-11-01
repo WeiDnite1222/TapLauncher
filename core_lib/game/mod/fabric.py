@@ -4,7 +4,7 @@ import logging
 import requests
 
 from core_lib.common.exception import VersionManifestFetchException, VersionDataKeyNotFoundException, \
-    VersionManifestException
+    VersionManifestException, LoaderUnsupportedSpecificVersion
 
 logger = logging.getLogger("Launcher.CoreLib")
 
@@ -16,7 +16,7 @@ FABRIC_MAVEN_URL = "https://maven.fabricmc.net/"
 def get_full_version_string(version: str, loader_version: str) -> str:
     return f"fabric-loader-{loader_version}-{version}"
 
-def fetch_fabric_version_list(version_manifest_url: str=FABRIC_META_VERSION_ENDPOINT_V2, timeout: int=5) -> list[dict]:
+def fetch_fabric_versions(version_manifest_url: str=FABRIC_META_VERSION_ENDPOINT_V2, timeout: int=5) -> list[dict]:
     try:
         r = requests.get(version_manifest_url, timeout=timeout)
     except requests.exceptions.Timeout:
@@ -80,10 +80,7 @@ def get_version_support_loader_list(target_version: str, loader_version_url: str
         )
     except requests.exceptions.HTTPError as e:
         if e.response.status_code == 404 or e.response.status_code == 400:
-            raise VersionManifestFetchException(
-                "HTTP error while fetch from {}: {}".format(loader_version_url, e),
-                user_message="Target version {} no fabric version found".format(target_version)
-            )
+            raise LoaderUnsupportedSpecificVersion("fabric", target_version) from e
         else:
             raise VersionManifestFetchException(
                 "HTTP error while fetch from {}: HTTP Status: {}".format(loader_version_url, e.response.status_code)
@@ -111,10 +108,7 @@ def get_version_support_loader_list(target_version: str, loader_version_url: str
         loaders.append(loader)
 
     if not loaders:
-        raise VersionManifestException(
-            "No available loader found in {}".format(loader_version_url),
-            user_message="Target version {} no fabric version found".format(target_version)
-        )
+        raise LoaderUnsupportedSpecificVersion("fabric", target_version)
 
     return loaders
 

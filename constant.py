@@ -1,4 +1,4 @@
-LAUNCHER_VERSION = "0.1.2-alpha"
+LAUNCHER_VERSION = "0.1.3-alpha"
 LAUNCHER_NAME = "TapLauncher"
 LAUNCHER_DIR_NAME = "TapLauncher"
 MAIN_REPO_URL = "https://repo.weispace.net/wei/Launcher/"

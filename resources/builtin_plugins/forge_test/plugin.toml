@@ -1,0 +1,8 @@
+group = "net.wei"
+id = "forgetest"
+name = "ForgeTest"
+version = "1.0.0"
+api_version = ">=0.0.1"
+entrypoint = "__init__.py:entry" # Python file name:endpoint
+icon = "neoforged.ico" # Relative to this plugin directory; GIF, PNG, JPG or BMP
+description = "Test forge support!"

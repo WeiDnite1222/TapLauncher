@@ -173,7 +173,7 @@ class ArgumentMappings:
                  user_type=None, user_properties=None, version_type=None, natives_directory=None,
                  launcher_name=None, launcher_version=None,
                  classpath=None, classpath_separator=None, library_directory=None,
-                 resolution: tuple[int, int] | None = None):
+                 resolution: tuple[int, int] | None = None, client_jar_name: str | None = None):
         self.player_name = player_name
         self.version_name = version_name
         self.game_directory = game_directory
@@ -201,6 +201,7 @@ class ArgumentMappings:
         self.launcher_name = launcher_name
         self.launcher_version = launcher_version
         self.classpath = classpath
+        self.client_jar_name = client_jar_name
         self.classpath_separator = classpath_separator
         self.library_directory = library_directory
 
@@ -442,6 +443,18 @@ def generate_launch_command(arg_maps: ArgumentMappings, main_class: str, java_pa
         parsed_user_jvm_args + parsed_manifest_jvm_args, # Combine manifest and user jvm arguments together
         arg_maps,
     )
+
+    # BootstrapLauncher must ignore the original client when the loader supplies
+    # its patched Minecraft module. The client filename can differ from the
+    # profile's version_name because manifests inherit the vanilla client JAR.
+    if arg_maps.client_jar_name:
+        prefix = "-DignoreList="
+        for index, argument in enumerate(parsed_jvm_args):
+            if argument.startswith(prefix):
+                ignored = [item for item in argument[len(prefix):].split(",") if item]
+                if not any(arg_maps.client_jar_name.startswith(item) for item in ignored):
+                    ignored.append(arg_maps.client_jar_name)
+                    parsed_jvm_args[index] = prefix + ",".join(ignored)
 
     cmd.extend(parsed_jvm_args)
     cmd.append(main_class)

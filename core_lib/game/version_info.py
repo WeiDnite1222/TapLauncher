@@ -1,5 +1,6 @@
 import json
 import logging
+import re
 import tempfile
 import warnings
 from collections.abc import Callable
@@ -12,7 +13,6 @@ from ..common.common import FileObject, download_file, SUPPORTED_HASH_ALGORITHMS
 from ..common.exception import VersionManifestFetchException, NoVersionFoundException, \
     NoSpecifiedVersionKeyException, VersionDataKeyNotFoundException, VersionManifestSaveException, \
     HashMismatchException, UnsupportedHashAlgorithmException
-from ..i18n import SUPPORTED_LANGUAGES
 
 MOJANG_VERSION_MANIFEST_V2 = "https://piston-meta.mojang.com/mc/game/version_manifest_v2.json"
 MOJANG_VERSION_MANIFEST = "https://piston-meta.mojang.com/mc/game/version_manifest.json"
@@ -601,6 +601,13 @@ def check_core_file_exists_and_verify(manifest: dict, core_file_path: Path,
 
     return True
 
+
+def validate_minecraft_version(version: str) -> bool:
+    if not isinstance(version, str) or not re.fullmatch(
+            r"[A-Za-z0-9][A-Za-z0-9._+\-]*", version):
+        return False
+
+    return True
 
 LATEST_VERSION_ALIASES = {
     "latest-release": {"displayName": "Latest Release"},

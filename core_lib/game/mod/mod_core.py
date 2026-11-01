@@ -22,26 +22,19 @@ LOADER_LIBRARY_MARKERS = {
 
 
 def detect_loader_name(manifest: dict) -> str | None:
-    candidates = set()
+    """Read the recorded loader identity without inferring it from dependencies."""
+    loader_name = manifest.get("loader")
+    if isinstance(loader_name, str) and loader_name:
+        return loader_name
 
-    for library in manifest.get("libraries", []):
-        name = library.get("name", "")
-        parts = name.split(":")
+    # Older Forge installations already record the identity in their receipt.
+    receipt = manifest.get("forgeInstall")
+    if isinstance(receipt, dict):
+        loader_name = receipt.get("loader")
+        if isinstance(loader_name, str) and loader_name:
+            return loader_name
 
-        if len(parts) < 3:
-            continue
-
-        loader_name = LOADER_LIBRARY_MARKERS.get(
-            (parts[0], parts[1])
-        )
-        if loader_name:
-            candidates.add(loader_name)
-
-    # Return None if no loader is found or multiple loaders are found.
-    if len(candidates) != 1:
-        return None
-
-    return next(iter(candidates))
+    return None
 
 def find_useful_part_in_mod_version_manifest(mod_version_manifest: dict):
     ver_id = mod_version_manifest.get("id", None)
@@ -95,7 +88,20 @@ def find_useful_part_in_mod_version_manifest(mod_version_manifest: dict):
 
 def merge_necessary_dependencies(inherits_libraries: list, mod_libraries: list, inherits_maven_url=MOJANG_LIBRARIES_ENDPOINT,
                                  mod_maven_url=None, default_extension="jar",
-                                 prefer_libraries_by: LibraryPreference = PREFER_MOD_LIBRARY) -> list[dict]:
+                                 prefer_libraries_by: LibraryPreference = PREFER_MOD_LIBRARY,
+                                 ignore_missing_url_libraries=False) -> list[dict]:
+    """
+    Merge necessary dependencies
+    :param inherits_libraries:
+    :param mod_libraries:
+    :param inherits_maven_url:
+    :param mod_maven_url:
+    :param default_extension:
+    :param prefer_libraries_by:
+    :param ignore_missing_url_libraries: Skip url regeneration if library url is missing and contains the key
+     "ignoreMissingURL": true
+    :return:
+    """
 
     inherits = {}
     result_pre = []
@@ -286,8 +292,9 @@ def merge_necessary_dependencies(inherits_libraries: list, mod_libraries: list, 
         # Check library download url
         endpoint = library["parsed"]["endpoint"] # maven url
         artifact_url = ((library.get("downloads") or {}).get("artifact") or {}).get("url")
+        ignore_missing_url = library.get("ignoreMissingURL", False)
 
-        if not artifact_url and not library.get("url") and not endpoint:
+        if not artifact_url and not library.get("url") and not endpoint and not ignore_missing_url:
             raise DependencyException(
                 f"No download source for library {library['name']!r}."
             )
@@ -295,7 +302,8 @@ def merge_necessary_dependencies(inherits_libraries: list, mod_libraries: list, 
         library_normalized = normalize_library_to_common_struct(
             library,
             default_maven_url=endpoint,
-            default_extension=default_extension
+            default_extension=default_extension,
+            ignore_missing_url=ignore_missing_url
         )
 
         # Cleanup and append
@@ -363,11 +371,23 @@ def merge_manifest(inherits_version_manifest: dict, mod_version_manifest: dict, 
         prefer_libraries_by=prefer_libraries_by
     )
 
-    # arguments
-    inherits_arguments = inherits_version_manifest.get("arguments", []) or inherits_version_manifest.get("minecraftArguments", "")
-    mod_arguments = mod_version_manifest.get("arguments", {}) or mod_version_manifest.get("minecraftArguments", {})
+    # Modern argument arrays extend the parent. Legacy minecraftArguments is a
+    # complete game command line (including vanilla options), so it replaces it.
+    def read_arguments(manifest: dict) -> dict:
+        arguments = deepcopy(manifest.get("arguments") or {})
+        if "game" not in arguments and manifest.get("minecraftArguments"):
+            arguments["game"] = shlex.split(manifest["minecraftArguments"])
+        return arguments
+
+    inherits_arguments = read_arguments(inherits_version_manifest)
+    mod_arguments = read_arguments(mod_version_manifest)
+    if (mod_version_manifest.get("minecraftArguments")
+            and "game" not in (mod_version_manifest.get("arguments") or {})):
+        inherits_arguments.pop("game", None)
 
     merged_manifest["arguments"] = merge_game_and_jvm_args(inherits_arguments, mod_arguments)
+    # The merged manifest now has a single canonical argument representation.
+    merged_manifest.pop("minecraftArguments", None)
 
     # Update version number
     mod_id = mod_version_manifest.get("id")
@@ -378,5 +398,15 @@ def merge_manifest(inherits_version_manifest: dict, mod_version_manifest: dict, 
 
     if inherits_id:
         merged_manifest["inheritsFrom"] = inherits_id
+
+    # Keep the child's recorded identity instead of inheriting the parent's.
+    merged_manifest.pop("loader", None)
+    loader_name = detect_loader_name(mod_version_manifest)
+    if loader_name is not None:
+        merged_manifest["loader"] = loader_name
+
+    # Processor output receipts must survive inheritance for launch-time checks.
+    if "forgeInstall" in mod_version_manifest:
+        merged_manifest["forgeInstall"] = deepcopy(mod_version_manifest["forgeInstall"])
 
     return merged_manifest

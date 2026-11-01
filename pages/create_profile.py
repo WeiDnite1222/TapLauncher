@@ -2,18 +2,23 @@ import threading
 from collections.abc import Callable
 from pathlib import Path
 
-from PySide6.QtCore import QSize, Qt, QObject, Signal, Slot
+from PySide6.QtCore import QSize, Qt, QObject, Signal, Slot, QTimer
 from PySide6.QtWidgets import QWidget, QVBoxLayout, QComboBox, QListWidget, QPushButton, QLabel, QHBoxLayout, \
     QSizePolicy, QListWidgetItem, QInputDialog
 
-from core_lib.common.exception import VersionManifestFetchException, VersionManifestException
-from core_lib.game.mod import fabric
+from core_lib.common.exception import (
+    VersionManifestFetchException, VersionManifestException, LoaderUnsupportedSpecificVersion,
+)
+from core_lib.game.mod import fabric, forge_like
 from core_lib.game.mod.mod_core import find_useful_part_in_mod_version_manifest
 from core_lib.game.version_info import get_all_versions, get_available_version_types
 from manager.game import ManifestManager, GameManager
 from manager.profile import CreateProfileRequest
 from manager.widgets import SignalTransferItem, WidgetManager
 from pages.install_java_dialog import InstallJavaDialog
+from pages.forge_profile_install_dialog import ForgeProfileInstallDialog
+from pages.loader_errors import format_unsupported_loader_version
+
 
 class CreateProfilePage(QWidget):
     def __init__(self, app, parent=None):
@@ -24,6 +29,7 @@ class CreateProfilePage(QWidget):
         self.widget_mgr: WidgetManager = app.widget_manager
         self.game_mgr: GameManager = app.game_manager
         self.manifest_mgr: ManifestManager = self.game_mgr.manifest
+        self._forge_install_dialog: ForgeProfileInstallDialog | None = None
 
         # Layout
         self.layout = QVBoxLayout()
@@ -182,6 +188,12 @@ class CreateProfilePage(QWidget):
                 "icon": Path(self.app.icon_dir, "modLoader", "neoforged.ico"),
                 "loadVersionMethod": getattr(self, "load_neoforge_version_list", None),
                 "profileCreateHandler": self.handle_neoforge_profile_create,
+            },
+            "Forge": {
+                "type": "modded",
+                "icon": Path(self.app.icon_dir, "modLoader", "forge.png"),
+                "loadVersionMethod": getattr(self, "load_forge_version_list", None),
+                "profileCreateHandler": self.handle_forge_profile_create,
             }
         }
         self.init_all()
@@ -201,7 +213,7 @@ class CreateProfilePage(QWidget):
     # Signal Handler
     #
     class UpdateListRequest(object):
-        def __init__(self, target_list: QListWidget | QComboBox, items: list[str], clean: bool=True,
+        def __init__(self, target_list: QListWidget | QComboBox, items: list[str], clean: bool = True,
                      current_index: int | None = None, custom_handler: Callable = None,
                      block_signals: bool = False, complete_callback: Callable = None):
             self.target_list = target_list
@@ -301,7 +313,7 @@ class CreateProfilePage(QWidget):
             self.target_list = target_list
 
     class DisplayListItem(QListWidgetItem):
-        def __init__(self, parent: QListWidget=None, display_text: str=None, raw_value: str=None):
+        def __init__(self, parent: QListWidget = None, display_text: str = None, raw_value: str = None):
             QListWidgetItem.__init__(self, parent)
 
             self.display_text = display_text
@@ -345,7 +357,6 @@ class CreateProfilePage(QWidget):
         if len(self.version_type_dropdown.currentText()) == 0:
             self.version_type_dropdown.setCurrentIndex(0)
 
-
     def update_version_list(self, request: UpdateListRequest):
         version_list = request.target_list
 
@@ -353,16 +364,20 @@ class CreateProfilePage(QWidget):
             raise TypeError("Target list is not a QListWidget or QComboBox")
 
         for version in request.items:
-            ver_id = version.get("id", None) or version.get("version", None)
-            stable = version.get("stable", None)
+            if isinstance(version, dict):
+                ver_id = version.get("id", None) or version.get("version", None)
+                stable = version.get("stable", None)
 
-            if not ver_id:
-                self.app.logger.warning("Provided version {} missing ID.".format(version))
+                if not ver_id:
+                    self.app.logger.warning("Provided version {} missing ID.".format(version))
+            else:
+                ver_id = version
+                stable = None
 
             display_text = ver_id
 
             if stable is not None and isinstance(stable, bool):
-                display_text = f"{ver_id}"+(" (stable)" if stable else "")
+                display_text = f"{ver_id}" + (" (stable)" if stable else "")
 
             item = self.DisplayListItem(
                 parent=request.target_list,
@@ -490,7 +505,8 @@ class CreateProfilePage(QWidget):
         if callable(profile_create_handler):
             profile_create_handler(profile_name, minecraft_version, loader_version)
 
-    def handle_vanilla_profile_create(self, profile_name: str, version: str, loader_version: None=None, switch_to_current=False):
+    def handle_vanilla_profile_create(self, profile_name: str, version: str, loader_version: None = None,
+                                      switch_to_current=False):
         """
         Handle vanilla profile creation.
         :param profile_name:
@@ -539,7 +555,8 @@ class CreateProfilePage(QWidget):
             self.app.tr_text("Profile {profile_id} successfully created.", profile_id=profile_id),
         )
 
-    def handle_fabric_profile_create(self, profile_name: str, minecraft_version: str, loader_version: str | None, switch_to_current=False):
+    def handle_fabric_profile_create(self, profile_name: str, minecraft_version: str, loader_version: str | None,
+                                     switch_to_current=False):
         """
         Handle fabric profile creation.
         :param profile_name:
@@ -571,10 +588,11 @@ class CreateProfilePage(QWidget):
                 minecraft_version,
                 {"version": loader_version},
             )
+            manifest["loader"] = "fabric"
             return manifest, None
 
         loader_manifest = self.manifest_mgr.get_cached_custom_version_manifest(
-            version_id, fetch_manifest_handler=fetch_loader_manifest,)
+            version_id, fetch_manifest_handler=fetch_loader_manifest, )
 
         if not loader_manifest:
             self.widget_mgr.signal.show_error_message.emit(
@@ -628,18 +646,58 @@ class CreateProfilePage(QWidget):
             ),
         )
 
+    def handle_forge_profile_create(self, profile_name: str, minecraft_version: str, loader_version: str | None,
+                                    switch_to_current=False):
+        """
+        Handle forge profile creation.
+        :param profile_name:
+        :param minecraft_version:
+        :param loader_version:
+        :param switch_to_current:
+        :return:
+        """
+        self._start_forge_like_profile_create(
+            "forge", profile_name, minecraft_version, loader_version, switch_to_current,
+        )
 
-    def handle_forge_profile_create(self, profile_name: str, minecraft_version: str, loader_version: str | None):
-        if not loader_version:
-            self.widget_mgr.signal.show_warning_message.emit(
-                self.app.tr_text("Selected a forge loader version before creating profile."),
-            )
+    def handle_neoforge_profile_create(self, profile_name: str, minecraft_version: str, loader_version: str | None,
+                                    switch_to_current=False):
+        """
+        Handle neoforge profile creation.
+        :param profile_name:
+        :param minecraft_version:
+        :param loader_version:
+        :param switch_to_current:
+        :return:
+        """
+        self._start_forge_like_profile_create(
+            "neoforge", profile_name, minecraft_version, loader_version, switch_to_current,
+        )
 
-    def handle_neoforge_profile_create(self, profile_name: str, minecraft_version: str, loader_version: str | None):
+    def _start_forge_like_profile_create(self, loader_name: str, profile_name: str,
+                                        minecraft_version: str, loader_version: str | None,
+                                        switch_to_current: bool = False):
         if not loader_version:
-            self.widget_mgr.signal.show_warning_message.emit(
-                self.app.tr_text("Selected a neoforge loader version before creating profile."),
-            )
+            self.widget_mgr.signal.show_warning_message.emit(self.app.tr_text(
+                "Select a {loader} version before creating a profile.",
+                loader="NeoForge" if loader_name == "neoforge" else "Forge",
+            ))
+            return
+
+        if self._forge_install_dialog is not None and self._forge_install_dialog.is_running:
+            self._forge_install_dialog.raise_()
+            self._forge_install_dialog.activateWindow()
+            return
+
+        dialog = ForgeProfileInstallDialog(
+            self.app, loader_name, minecraft_version, loader_version,
+            profile_name, switch_to_current=switch_to_current, parent=self,
+        )
+        self._forge_install_dialog = dialog
+        self.create_profile_button.setEnabled(False)
+        dialog.completed.connect(lambda _success: self.create_profile_button.setEnabled(True))
+        dialog.open()
+        QTimer.singleShot(0, dialog.start)
 
     #
     # Background Thread
@@ -734,6 +792,117 @@ class CreateProfilePage(QWidget):
             loaders = fabric.get_version_support_loader_list(
                 selected_version
             )
+        except LoaderUnsupportedSpecificVersion as e:
+            self.widget_mgr.signal.show_error_message.emit(
+                format_unsupported_loader_version(e, self.app.tr_text)
+            )
+            return
+        except (VersionManifestFetchException, VersionManifestException) as e:
+            self.widget_mgr.signal.show_error_message.emit(
+                self.app.tr_text(
+                    "Failed to fetch version manifest: {error}", error=e.user_message
+                ),
+            )
+            return
+        except Exception as e:
+            self.widget_mgr.signal.show_error_message.emit(
+                self.app.tr_text(
+                    "An unexpected error occurred while fetching version manifest: {error}",
+                    error=e,
+                ),
+            )
+            return
+
+        request = self.UpdateListRequest(
+            target_list=self.mod_loader_version_list,
+            items=loaders,
+            current_index=0,
+            custom_handler=self.update_version_list,
+            block_signals=True,
+        )
+        self.signals.update_list.emit(request)
+
+    def load_forge_version_list(self):
+        self.signals.clean_list.emit(self.mod_loader_version_list)
+        request = self.GetSelectedItem(
+            target_list=self.version_list
+        )
+        self.signals.get_selected_item.emit(request)
+
+        if not request.wait(10):
+            self.widget_mgr.signal.show_error_message.emit(
+                self.app.tr_text("Timeout while waiting for selected version."),
+            )
+
+        selected_version = request.result()
+
+        if not selected_version:
+            self.widget_mgr.signal.show_warning_message.emit(
+                self.app.tr_text("No version selected."),
+            )
+
+        try:
+            loaders = forge_like.get_version_support_loader_list(selected_version)
+        except LoaderUnsupportedSpecificVersion as e:
+            self.widget_mgr.signal.show_error_message.emit(
+                format_unsupported_loader_version(e, self.app.tr_text)
+            )
+            return
+        except (VersionManifestFetchException, VersionManifestException) as e:
+            self.widget_mgr.signal.show_error_message.emit(
+                self.app.tr_text(
+                    "Failed to fetch version manifest: {error}", error=e.user_message
+                ),
+            )
+            return
+        except Exception as e:
+            self.widget_mgr.signal.show_error_message.emit(
+                self.app.tr_text(
+                    "An unexpected error occurred while fetching version manifest: {error}",
+                    error=e,
+                ),
+            )
+            return
+
+        request = self.UpdateListRequest(
+            target_list=self.mod_loader_version_list,
+            items=loaders,
+            current_index=0,
+            custom_handler=self.update_version_list,
+            block_signals=True,
+        )
+        self.signals.update_list.emit(request)
+
+    def load_neoforge_version_list(self):
+        self.signals.clean_list.emit(self.mod_loader_version_list)
+        request = self.GetSelectedItem(
+            target_list=self.version_list
+        )
+        self.signals.get_selected_item.emit(request)
+
+        if not request.wait(10):
+            self.widget_mgr.signal.show_error_message.emit(
+                self.app.tr_text("Timeout while waiting for selected version."),
+            )
+
+        selected_version = request.result()
+
+        if not selected_version:
+            self.widget_mgr.signal.show_warning_message.emit(
+                self.app.tr_text("No version selected."),
+            )
+
+        try:
+            loaders = forge_like.get_version_support_loader_list(
+                selected_version,
+                forge_metadata_url=forge_like.NEOFORGE_METADATA_URL,
+                loader_name="neoforge",
+            )
+        except LoaderUnsupportedSpecificVersion as e:
+            self.widget_mgr.signal.show_error_message.emit(
+                format_unsupported_loader_version(e, self.app.tr_text)
+            )
+            return
         except (VersionManifestFetchException, VersionManifestException) as e:
             self.widget_mgr.signal.show_error_message.emit(
                 self.app.tr_text(

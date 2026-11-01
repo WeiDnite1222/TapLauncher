@@ -49,7 +49,8 @@ def generate_unique_library_key(group: str, artifact: str, classifier: str | Non
 
 
 def normalize_library_to_common_struct(library: dict, default_maven_url: str | None = MOJANG_LIBRARIES_ENDPOINT,
-                                       default_extension: str = "jar") ->  dict:
+                                       default_extension: str = "jar",
+                                       ignore_missing_url=False) ->  dict:
     result = deepcopy(library)
     name: str | None = library.get("name")
 
@@ -70,6 +71,13 @@ def normalize_library_to_common_struct(library: dict, default_maven_url: str | N
 
     artifact_raw = dict(downloads.get("artifact") or {})
 
+    # Legacy native-only entries have classifiers, not a Java artifact.
+    # Do not invent a base JAR that may not exist in the repository.
+    if not artifact_raw and (result.get("natives") or any(
+            key.startswith("natives-") for key in (downloads.get("classifiers") or {}))):
+        result["downloads"] = downloads
+        return result
+
     # Generate new relative path and put back
     if not artifact_raw.get("path"):
         filename = generate_filename_from_maven_coordinate(
@@ -85,7 +93,7 @@ def normalize_library_to_common_struct(library: dict, default_maven_url: str | N
             filename,
         )
 
-    if not artifact_raw.get("url"):
+    if not artifact_raw.get("url") and not ignore_missing_url:
         top_level_url: str | None = result.get("url")
 
         if top_level_url:

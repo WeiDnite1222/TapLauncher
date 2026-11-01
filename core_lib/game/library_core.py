@@ -15,6 +15,17 @@ from ..common.exception import UnsupportedPlatformException, NativeResolveExcept
 
 logger = logging.getLogger("Launcher.CoreLib")
 
+def _is_native_only_library(library: dict) -> bool:
+    name = library.get("name", "")
+    if re.search(r":natives-[^:@]+(?:@[^:]+)?$", name):
+        return True
+    downloads = library.get("downloads") or {}
+    has_natives = library.get("natives") or any(
+        key.startswith("natives-") for key in (downloads.get("classifiers") or {})
+    )
+    return bool(has_natives and not downloads.get("artifact"))
+
+
 def collect_library_artifacts(specific_version_manifest):
     _, _, _, _, libraries, _, _ = find_useful_part_in_specific_version_manifest(specific_version_manifest)
 
@@ -32,12 +43,8 @@ def collect_library_artifacts(specific_version_manifest):
         name = library.get("name", "")
         artifact_raw = library.get("downloads", {}).get("artifact", {})
         rules = library.get("rules", [])
-        classifiers = library.get("downloads", {}).get("classifiers", {})
-        natives = library.get("natives", {})
-
-        # Ignore natives
-        if (len(natives) > 0 or bool(re.search(r":natives-[^:]+$", name)) or
-                any(native.startswith("natives-") for native in classifiers)):
+        # Mixed entries also contain a Java JAR needed on the classpath.
+        if _is_native_only_library(library):
             logger.info(f"Skipping {name} because its a native library.")
             continue
 
@@ -350,12 +357,8 @@ def check_libraries_exists(manifest: dict, libraries_dir: Path):
         name = library.get("name", "")
         artifact_raw = library.get("downloads", {}).get("artifact", {})
         rules = library.get("rules", [])
-        classifiers = library.get("downloads", {}).get("classifiers", {})
-        natives = library.get("natives", {})
-
-        # Ignore natives
-        if (len(natives) > 0 or bool(re.search(r":natives-[^:]+$", name)) or
-                any(native.startswith("natives-") for native in classifiers)):
+        # Mixed entries also contain a Java JAR needed on the classpath.
+        if _is_native_only_library(library):
             logger.info(f"Skipping {name} because its a native library.")
             continue
 
@@ -561,12 +564,8 @@ def generate_classpath(manifest: dict, libraries_dir: Path, core_file_path: Path
         name = library.get("name", "")
         artifact_raw = library.get("downloads", {}).get("artifact", {})
         rules = library.get("rules", [])
-        classifiers = library.get("downloads", {}).get("classifiers", {})
-        natives = library.get("natives", {})
-
-        # Ignore natives
-        if (len(natives) > 0 or bool(re.search(r":natives-[^:]+$", name)) or
-                any(native.startswith("natives-") for native in classifiers)):
+        # Mixed entries also contain a Java JAR needed on the classpath.
+        if _is_native_only_library(library):
             logger.info(f"Skipping {name} because its a native library.")
             continue
 
