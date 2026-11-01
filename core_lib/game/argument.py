@@ -397,7 +397,8 @@ def generate_feature_placeholders(maps: ArgumentMappings):
 
 def generate_launch_command(arg_maps: ArgumentMappings, main_class: str, java_path: str, full_args: dict | str
                             , features: dict | None = None, user_jvm_args: list[str] | None | str = None,
-                            strict_placeholders=False) -> list[str]:
+                            strict_placeholders=False, *, extra_jvm_args: list[str] | None = None,
+                            extra_game_args: list[str] | None = None) -> list[str]:
     cmd = [java_path]
     game_args, jvm_args = find_game_and_jvm_args(full_args)
 
@@ -457,8 +458,10 @@ def generate_launch_command(arg_maps: ArgumentMappings, main_class: str, java_pa
                     parsed_jvm_args[index] = prefix + ",".join(ignored)
 
     cmd.extend(parsed_jvm_args)
+    cmd.extend(extra_jvm_args or [])
     cmd.append(main_class)
     cmd.extend(parsed_game_args)
+    cmd.extend(extra_game_args or [])
     return cmd
 
 

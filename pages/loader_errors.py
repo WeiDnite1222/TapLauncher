@@ -9,7 +9,10 @@ def format_unsupported_loader_version(
     error: LoaderUnsupportedSpecificVersion, translate: Callable[..., str],
 ) -> str:
     loader = {
-        "fabric": "Fabric", "forge": "Forge", "neoforge": "NeoForge",
+        "fabric": "Fabric",
+        "forge": "Forge",
+        "neoforge": "NeoForge",
+        "quilt": "Quilt"
     }.get(error.loader_name, error.loader_name)
     return translate(
         "{loader} does not support Minecraft {version}.",

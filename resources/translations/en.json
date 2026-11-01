@@ -1,4 +1,13 @@
 {
+  "OK": "OK",
+  "Old Alpha": "Old Alpha",
+  "Old Beta": "Old Beta",
+  "Release": "Release",
+  "Snapshot": "Snapshot",
+  "Use profile isolation": "Use profile isolation",
+  "{version} (stable)": "{version} (stable)",
+  "Selected a quilt loader version before creating profile.": "Selected a quilt loader version before creating profile.",
+  "Profile {profile_id} with quilt loader successfully created.": "Profile {profile_id} with quilt loader successfully created.",
   "Clear selection": "Clear selection",
   "Select a mod to view its details.": "Select a mod to view its details.",
   "Install {count} selected mods": "Install {count} selected mods",

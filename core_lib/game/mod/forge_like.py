@@ -25,6 +25,7 @@ from core_lib.game.library import (
     generate_filename_from_maven_coordinate, generate_repo_path,
     filter_platform_libraries,
 )
+from core_lib.game.libraryx import normalize_library_to_common_struct
 from core_lib.game.mod.rules import FORGE_LIKE_LOADERS, MOD_LOADER_RULES
 
 FORGE_MAVEN_URL = "https://maven.minecraftforge.net/"
@@ -302,6 +303,20 @@ def parse_installer_metadata(extracted_dir: Path, *,
         version_manifest = _read_json_object(manifest_path)
     elif isinstance(profile.get("versionInfo"), dict):
         version_manifest = dict(profile["versionInfo"])
+        # Legacy installers declare Maven coordinates instead of downloads.
+        # Normalize before URL-less entries can be mistaken for generated files.
+        legacy_install = profile.get("install")
+        embedded_coordinate = legacy_install.get("path") if isinstance(legacy_install, dict) else None
+        libraries = version_manifest.get("libraries")
+        if isinstance(libraries, list):
+            normalized = []
+            for library in libraries:
+                if isinstance(library, dict) and "downloads" not in library:
+                    library = normalize_library_to_common_struct(library)
+                if isinstance(library, dict) and library.get("name") == embedded_coordinate:
+                    library = dict(library, ignoreMissingURL=True)
+                normalized.append(library)
+            version_manifest["libraries"] = normalized
     else:
         raise ValueError("Unsupported installer: no version JSON or versionInfo found")
 
@@ -701,6 +716,10 @@ def collect_install_dependencies(install_plan: LoaderInstallPlan, libraries_dir:
                 if ignore_missing_url:
                     continue
 
+                # Legacy name/url entries have no downloads field. Explicitly
+                # malformed modern metadata must still fail validation below.
+                if "downloads" not in library:
+                    library = normalize_library_to_common_struct(library)
                 downloads = library.get("downloads")
                 if not isinstance(downloads, dict):
                     raise ValueError("Library downloads must be an object")

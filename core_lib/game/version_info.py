@@ -339,7 +339,9 @@ def find_useful_part_in_specific_version_manifest(spec_version_manifest: dict,
     if failback_java_version is None:
         failback_java_version = default_java_version()
 
-    java_version = spec_version_manifest.get("javaVersion", failback_java_version)
+    java_version = spec_version_manifest.get("javaVersion")
+    if java_version is None:
+        java_version = failback_java_version
 
     if not arguments and not legacy_game_args:
         raise VersionDataKeyNotFoundException(

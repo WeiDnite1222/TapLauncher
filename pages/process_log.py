@@ -5,7 +5,7 @@ from collections.abc import Callable
 from datetime import datetime
 from pathlib import Path
 
-from PySide6.QtCore import QObject, Signal
+from PySide6.QtCore import QObject, Signal, Slot
 from PySide6.QtGui import QCloseEvent
 from PySide6.QtWidgets import (
     QHBoxLayout,
@@ -22,8 +22,20 @@ from PySide6.QtWidgets import (
 from core_lib.qt import messagebox
 
 
+def process_log_output(window: "ProcessLogWindow", source: str, text: str | None) -> list[tuple[str, str]]:
+    """Default Wheel output hook. None marks EOF for the specified stream."""
+    if text is None:
+        return []
+    return [("error" if source == "stderr" else "normal", text)]
+
+
+def create_process_log_widget(window: "ProcessLogWindow") -> QPlainTextEdit:
+    """Wheel factory hook for a window's output widget."""
+    return QPlainTextEdit(window)
+
+
 class _ProcessSignals(QObject):
-    output = Signal(str, str)
+    output = Signal(str, object)
     # Windows may return an unsigned 32-bit exit code (for example
     # 0xFFFFFFFF), which does not fit in Qt's signed Signal(int).
     finished = Signal(object)
@@ -82,7 +94,14 @@ class ProcessLogWindow(QMainWindow):
 
         self.app.apply_qss(Path("process_log.qss"), self.setStyleSheet)
 
-        self._signals.output.connect(self._append_output)
+        plugin_manager = getattr(self.app, "plugin_manager", None)
+        if plugin_manager is not None:
+            try:
+                self.set_output_widget(plugin_manager.get_api("launcher.process_log.create_widget")(self))
+            except Exception:
+                self.app.logger.exception("Process log widget hook failed; keeping the default viewer.")
+
+        self._signals.output.connect(self._process_output)
         self._signals.finished.connect(self._process_finished)
         self._signals.read_failed.connect(self._read_failed)
 
@@ -110,6 +129,58 @@ class ProcessLogWindow(QMainWindow):
     def append_message(self, message: str) -> None:
         self._append_output("launcher", message)
 
+    def set_output_widget(self, widget: QPlainTextEdit) -> None:
+        """Replace the viewer on the GUI thread, preserving stored output."""
+        if not isinstance(widget, QPlainTextEdit):
+            raise TypeError("Process log widget must be a QPlainTextEdit or subclass.")
+        if widget is self.log_output:
+            return
+        widget.setReadOnly(True)
+        widget.setLineWrapMode(QPlainTextEdit.LineWrapMode.NoWrap)
+        widget.setMaximumBlockCount(self.MAX_LOG_LINES)
+        widget.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Expanding)
+        previous = self.log_output
+        self.centralWidget().layout().replaceWidget(previous, widget)
+        self.log_output = widget
+        self._rebuild_output()
+        previous.hide()
+        previous.deleteLater()
+        widget.show()
+
+    def _display_entry(self, line_type: str, message: str) -> None:
+        append = getattr(self.log_output, "append_log_entry", None)
+        if callable(append):
+            append(line_type, message)
+        else:
+            self.log_output.appendPlainText(message)
+
+    def _rebuild_output(self) -> None:
+        rebuild = getattr(self.log_output, "set_log_entries", None)
+        if callable(rebuild):
+            rebuild(self.lines)
+        else:
+            self.log_output.setPlainText("\n".join(message for _, message in self.lines))
+
+    @Slot(str, object)
+    def _process_output(self, source: str, text: str | None) -> None:
+        """Run plugin parsing on the GUI thread before storing/displaying output."""
+        try:
+            plugin_manager = getattr(self.app, "plugin_manager", None)
+            callback = (plugin_manager.get_api("launcher.process_log.output")
+                        if plugin_manager is not None else process_log_output)
+            events = callback(self, source, text)
+            if not isinstance(events, list) or not all(
+                isinstance(event, tuple) and len(event) == 2
+                and all(isinstance(value, str) for value in event)
+                for event in events
+            ):
+                raise TypeError("Process log output hook must return a list of (type, message) tuples.")
+        except Exception:
+            self.app.logger.exception("Process log output hook failed; displaying raw output.")
+            events = process_log_output(self, source, text)
+        for line_type, message in events:
+            self._append_output(line_type, message)
+
     def _append_output(self, line_type: str, message: str) -> None:
         """Store and display one line, trimming old output in bounded chunks."""
         if len(self.lines) >= self.MAX_LOG_LINES:
@@ -132,12 +203,10 @@ class ProcessLogWindow(QMainWindow):
             self.lines.insert(0, ("truncated", marker))
 
             # Keep the widget and the saved-log buffer identical after trimming.
-            self.log_output.setPlainText(
-                "\n".join(stored_message for _, stored_message in self.lines)
-            )
+            self._rebuild_output()
 
         self.lines.append((line_type, message))
-        self.log_output.appendPlainText(message)
+        self._display_entry(line_type, message)
 
     @property
     def last_error_message(self) -> str | None:
@@ -147,9 +216,11 @@ class ProcessLogWindow(QMainWindow):
         try:
             if self.process.stdout is not None:
                 for line in self.process.stdout:
-                    self._signals.output.emit("normal", line.rstrip("\r\n"))
+                    self._signals.output.emit("stdout", line.rstrip("\r\n"))
         except Exception as exc:
             self._signals.read_failed.emit(str(exc))
+        finally:
+            self._signals.output.emit("stdout", None)
 
     def _read_stderr(self) -> None:
         try:
@@ -159,9 +230,11 @@ class ProcessLogWindow(QMainWindow):
                     if message.strip():
                         self._last_error_message = message.strip()
                         self._stderr_lines.append(message)
-                    self._signals.output.emit("error", message)
+                    self._signals.output.emit("stderr", message)
         except Exception as exc:
             self._signals.read_failed.emit(str(exc))
+        finally:
+            self._signals.output.emit("stderr", None)
 
     def _wait_for_process(self) -> None:
         exit_code = self._normalize_exit_code(self.process.wait())

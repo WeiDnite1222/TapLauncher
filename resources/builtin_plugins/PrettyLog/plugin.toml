@@ -1,0 +1,8 @@
+group = "net.wei"
+id = "prettylog"
+name = "PrettyLog"
+version = "1.0.0"
+api_version = ">=0.0.2"
+entrypoint = "__init__.py:entry" # Python file name:endpoint
+icon = "nugget.gif" # Relative to this plugin directory; GIF, PNG, JPG or BMP
+description = "Make log output more pretty! Use the version's official Log4j client XML configuration and display parsed game logs."

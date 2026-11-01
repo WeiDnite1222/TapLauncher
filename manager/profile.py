@@ -49,7 +49,6 @@ class CreateProfileRequest:
     java_args: str = ""
     icon: str = ""
     resolution: tuple[int, int] | None = None
-
 class _Profile_UnsetType:
     pass
 

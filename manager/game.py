@@ -27,7 +27,8 @@ from core_lib.game.mod.mod_core import merge_manifest, PREFER_MOD_LIBRARY, detec
 from core_lib.game.mod.rules import MOD_LOADER_RULES
 from core_lib.game.version_info import fetch_and_save_version_manifest, get_specific_version_manifest_url_and_hash, \
     save_version_manifest, find_useful_part_in_specific_version_manifest, download_core_file, get_latest_version, \
-    LATEST_VERSION_ALIASES, check_core_file_exists_and_verify, validate_version_manifest, validate_minecraft_version
+    LATEST_VERSION_ALIASES, check_core_file_exists_and_verify, validate_version_manifest, validate_minecraft_version, \
+    default_java_version
 from core_lib.runtime.java import find_java_installations, get_java_version
 from core_lib.runtime.mojang import download_java_runtimes, fetch_runtime_manifest, get_current_platform_runtime_key
 from manager.account import AccountManager, LaunchAccount
@@ -779,7 +780,9 @@ class JavaManager:
 
     def resolve_runtime(self, *, manifest: dict | None = None, major_version: int | None = None,
                         preferred_runtime_id: str | None = None) -> JavaRuntime | None:
-        java_requirement = (manifest or {}).get("javaVersion", {})
+        java_requirement = (manifest or {}).get("javaVersion")
+        if java_requirement is None:
+            java_requirement = default_java_version() if manifest is not None else {}
         required_major = major_version or java_requirement.get("majorVersion")
 
         if required_major is None:
@@ -839,7 +842,9 @@ class JavaManager:
         if runtime:
             return runtime
 
-        requirement = manifest.get("javaVersion") or {}
+        requirement = manifest.get("javaVersion")
+        if requirement is None:
+            requirement = default_java_version()
         component = requirement.get("component")
         major = requirement.get("majorVersion")
 
@@ -1291,6 +1296,25 @@ class LaunchManager:
     class LaunchSignal(QObject):
         finished = Signal(object, object)  # LaunchProfile, LaunchResult > LaunchProfilePage.launch_finished()
 
+    @staticmethod
+    def extra_arguments(profile: LaunchProfile, version_manifest: dict) -> dict[str, list[str]]:
+        """Wheel hook: return additional JVM and game arguments for this launch."""
+        return {"jvm": [], "game": []}
+
+    def generate_command(self, profile: LaunchProfile, version_manifest: dict, **kwargs) -> list[str]:
+        plugin_manager = getattr(self.app, "plugin_manager", None)
+        callback = (plugin_manager.get_api("launcher.game.launch.extra_arguments")
+                    if plugin_manager is not None else self.extra_arguments)
+        extras = callback(profile, version_manifest)
+        if not isinstance(extras, dict) or set(extras) != {"jvm", "game"}:
+            raise TypeError('Launch extra arguments must be a dictionary with "jvm" and "game" keys.')
+        for arguments in extras.values():
+            if not isinstance(arguments, list) or not all(isinstance(arg, str) for arg in arguments):
+                raise TypeError("Launch extra arguments must be lists of strings.")
+        return generate_launch_command(
+            **kwargs, extra_jvm_args=extras["jvm"], extra_game_args=extras["game"],
+        )
+
     def launch(self, profile: LaunchProfile) -> LaunchResult:
         result = LaunchResult()
 
@@ -1523,7 +1547,9 @@ class LaunchManager:
                 "has_custom_resolution": profile.resolution is not None,
             }
 
-            cmd = generate_launch_command(
+            cmd = self.generate_command(
+                profile=profile,
+                version_manifest=version_manifest,
                 arg_maps=arg_maps,
                 main_class=main_class,
                 java_path=java_path,
@@ -1571,7 +1597,18 @@ class LaunchManager:
 
     def start_launch_task(self, profile: LaunchProfile) -> Thread | None:
         def worker():
-            result = self.launch(profile)
+            try:
+                plugin_manager = getattr(self.app, "plugin_manager", None)
+                callback = (plugin_manager.get_api("launcher.game.launch")
+                            if plugin_manager is not None else self.launch)
+                result = callback(profile)
+                if not isinstance(result, LaunchResult):
+                    raise TypeError("Launch hook must return a LaunchResult.")
+                if not result.success:
+                    self.profile_failed(profile.profile_id)
+            except Exception as exc:
+                self.profile_failed(profile.profile_id)
+                result = LaunchResult().fail(f"Unable to launch game: {exc}")
             self.signal.finished.emit(profile, result)
             return result
 
@@ -1603,10 +1640,7 @@ class LaunchManager:
         except ValueError:
             pass
 
-        try:
-            self.launching_profiles.remove(profile_id)
-        except ValueError:
-            pass
+        self.launching_profiles.discard(profile_id)
 
         self.app.logger.debug(
             f"Profile {profile_id} exited."
@@ -1641,6 +1675,12 @@ class GameManager(QObject):
                                     self.java, self.game_file, self.account_manager, self.profile_mgr)
 
     def register_plugin_apis(self, plugin_manager):
+        from pages.process_log import process_log_output, create_process_log_widget
+
         plugin_manager.register_api("launcher.game.versions.list", self.manifest.list_available_profile_versions)
         plugin_manager.register_api("launcher.game.java.list", self.java.list_runtimes)
         plugin_manager.register_api("launcher.game.is_profile_running", self.launch.is_profile_running)
+        plugin_manager.register_api("launcher.game.launch", self.launch.launch)
+        plugin_manager.register_api("launcher.game.launch.extra_arguments", self.launch.extra_arguments)
+        plugin_manager.register_api("launcher.process_log.output", process_log_output)
+        plugin_manager.register_api("launcher.process_log.create_widget", create_process_log_widget)

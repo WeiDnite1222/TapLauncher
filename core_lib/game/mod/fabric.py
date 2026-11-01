@@ -13,12 +13,13 @@ FABRIC_META_LOADER_VERSION_ENDPOINT_V2 = "https://meta.fabricmc.net/v2/versions/
 FABRIC_META_LOADER_MANIFEST_ENDPOINT_V2 = "https://meta.fabricmc.net/v2/versions/loader/{}/{}/profile/json"
 FABRIC_MAVEN_URL = "https://maven.fabricmc.net/"
 
-def get_full_version_string(version: str, loader_version: str) -> str:
-    return f"fabric-loader-{loader_version}-{version}"
+def get_full_version_string(version: str, loader_version: str, loader_name="fabric") -> str:
+    return f"{loader_name}-loader-{loader_version}-{version}"
 
 def fetch_fabric_versions(version_manifest_url: str=FABRIC_META_VERSION_ENDPOINT_V2, timeout: int=5) -> list[dict]:
     try:
         r = requests.get(version_manifest_url, timeout=timeout)
+        r.raise_for_status()
     except requests.exceptions.Timeout:
         raise VersionManifestFetchException(
             "Timeout while fetch from {}".format(version_manifest_url)
@@ -43,11 +44,15 @@ def fetch_fabric_versions(version_manifest_url: str=FABRIC_META_VERSION_ENDPOINT
             "JSON decode error while fetch from {}: {}".format(version_manifest_url, e)
         )
 
-    versions = data.get("versions")
+    # /versions returns an object; /versions/game returns the array directly.
+    versions = data.get("game") if isinstance(data, dict) else data
 
-    if not versions:
+    if (not isinstance(versions, list) or not versions
+            or any(not isinstance(item, dict)
+                   or not isinstance(item.get("version"), str)
+                   or not item["version"] for item in versions)):
         raise VersionManifestFetchException(
-            "Version this is empty or not set yet in mod version manifest"
+            "Game version list is missing, empty or invalid in {}".format(version_manifest_url)
         )
 
     return versions
@@ -65,7 +70,7 @@ def is_version_supported_and_stable(fabric_version_list: list[dict], target_vers
 
     return False, None
 
-def get_version_support_loader_list(target_version: str, loader_version_url: str=FABRIC_META_LOADER_VERSION_ENDPOINT_V2, timeout: int=5)\
+def get_version_support_loader_list(target_version: str, loader_version_url: str=FABRIC_META_LOADER_VERSION_ENDPOINT_V2, timeout: int=5, *, loader_name: str="fabric")\
         -> list[dict]:
     try:
         r = requests.get(loader_version_url.format(target_version), timeout=timeout)
@@ -80,7 +85,7 @@ def get_version_support_loader_list(target_version: str, loader_version_url: str
         )
     except requests.exceptions.HTTPError as e:
         if e.response.status_code == 404 or e.response.status_code == 400:
-            raise LoaderUnsupportedSpecificVersion("fabric", target_version) from e
+            raise LoaderUnsupportedSpecificVersion(loader_name, target_version) from e
         else:
             raise VersionManifestFetchException(
                 "HTTP error while fetch from {}: HTTP Status: {}".format(loader_version_url, e.response.status_code)
@@ -97,18 +102,23 @@ def get_version_support_loader_list(target_version: str, loader_version_url: str
             "JSON decode error while fetch from {}: {}".format(loader_version_url, e)
         )
 
+    if not isinstance(versions, list):
+        raise VersionManifestFetchException(
+            "Invalid loader version list in {}".format(loader_version_url)
+        )
+
     loaders = []
 
     for version in versions:
-        loader = version.get("loader", None)
-        if not loader:
+        loader = version.get("loader") if isinstance(version, dict) else None
+        if not isinstance(loader, dict) or not isinstance(loader.get("version"), str) or not loader["version"]:
             logger.warning("Found corrupted or unsupported loader manifest")
             continue
 
         loaders.append(loader)
 
     if not loaders:
-        raise LoaderUnsupportedSpecificVersion("fabric", target_version)
+        raise LoaderUnsupportedSpecificVersion(loader_name, target_version)
 
     return loaders
 

@@ -108,3 +108,27 @@ def test_legacy_selector_excludes_missing_runtimes(java_manager):
     runtime = add_runtime(java_manager)
     runtime.executable.unlink()
     assert java_manager.get_or_cache_jvm_settings() == []
+
+
+@pytest.mark.parametrize("manifest", [{}, {"javaVersion": None}])
+def test_legacy_manifest_resolves_java_8(java_manager, manifest):
+    add_runtime(java_manager, "modern", major=21)
+    legacy = add_runtime(java_manager, "legacy", major=8)
+    assert java_manager.resolve_runtime(manifest=manifest) == legacy
+    assert java_manager.ensure_runtime(manifest) == legacy
+
+
+@pytest.mark.parametrize("manifest", [{}, {"javaVersion": None}])
+def test_legacy_manifest_installs_java_8(java_manager, monkeypatch, manifest):
+    monkeypatch.setattr("manager.game.find_java_installations", lambda _: ([], []))
+    runtime = JavaRuntime("legacy", 8, "1.8.0", Path("java"), Path("jre"), "managed")
+    install = Mock(return_value=runtime)
+    monkeypatch.setattr(java_manager, "install_runtime", install)
+
+    assert java_manager.ensure_runtime(manifest, auto_install=True) == runtime
+    install.assert_called_once_with("jre-legacy", progress_callback=None, redownload_callback=None)
+
+
+def test_resolve_without_requirement_returns_none(java_manager):
+    add_runtime(java_manager, "legacy", major=8)
+    assert java_manager.resolve_runtime() is None

@@ -1,6 +1,7 @@
 import math
 import threading
 import traceback
+from pathlib import Path
 
 from PySide6.QtCore import QObject, Qt, Signal, Slot
 from PySide6.QtWidgets import (
@@ -39,13 +40,15 @@ class ForgeProfileInstallDialog(QDialog):
         installed = Signal(object, object)
 
     def __init__(self, app, loader_name: str, minecraft_version: str, loader_version: str,
-                 profile_name: str | None = None, switch_to_current: bool = False, parent=None):
+                 profile_name: str | None = None, switch_to_current: bool = False, parent=None,
+                 *, profile_dir: Path | None = None):
         super().__init__(parent)
         self.app = app
         self.loader_name = loader_name
         self.minecraft_version = minecraft_version
         self.loader_version = loader_version
         self.profile_name = profile_name
+        self.profile_dir = profile_dir
         self.switch_to_current = switch_to_current
         self.is_running = True
         self._started = False
@@ -171,8 +174,10 @@ class ForgeProfileInstallDialog(QDialog):
             self._stage_changed("creating the profile")
             request = CreateProfileRequest(
                 name=self.profile_name, version_id=version_id,
+                game_dir=self.profile_dir,
                 version_type=manifest.get("type") or vanilla.get("type") or "custom",
             )
+
             profile_id = self.app.profile_manager.create_profile(request)
             if profile_id is None:
                 raise RuntimeError(self.app.tr_text(

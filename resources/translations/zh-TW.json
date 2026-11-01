@@ -1,4 +1,13 @@
 {
+  "OK": "確定",
+  "Old Alpha": "舊版 Alpha",
+  "Old Beta": "舊版 Beta",
+  "Release": "正式版",
+  "Snapshot": "快照版",
+  "Use profile isolation": "使用獨立的遊戲目錄",
+  "{version} (stable)": "{version}（穩定版）",
+  "Selected a quilt loader version before creating profile.": "請先選擇 Quilt 載入器版本再建立設定檔。",
+  "Profile {profile_id} with quilt loader successfully created.": "已成功建立使用 Quilt 載入器的設定檔 {profile_id}。",
   "Clear selection": "清除勾選",
   "Select a mod to view its details.": "選擇模組以查看詳細資訊。",
   "Install {count} selected mods": "安裝已勾選的 {count} 個模組",

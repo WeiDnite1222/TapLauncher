@@ -1,15 +1,16 @@
 import threading
 from collections.abc import Callable
 from pathlib import Path
+from uuid import uuid4
 
 from PySide6.QtCore import QSize, Qt, QObject, Signal, Slot, QTimer
 from PySide6.QtWidgets import QWidget, QVBoxLayout, QComboBox, QListWidget, QPushButton, QLabel, QHBoxLayout, \
-    QSizePolicy, QListWidgetItem, QInputDialog
+    QSizePolicy, QListWidgetItem, QDialog, QLineEdit, QCheckBox, QDialogButtonBox
 
 from core_lib.common.exception import (
     VersionManifestFetchException, VersionManifestException, LoaderUnsupportedSpecificVersion,
 )
-from core_lib.game.mod import fabric, forge_like
+from core_lib.game.mod import fabric, forge_like, quilt
 from core_lib.game.mod.mod_core import find_useful_part_in_mod_version_manifest
 from core_lib.game.version_info import get_all_versions, get_available_version_types
 from manager.game import ManifestManager, GameManager
@@ -150,7 +151,13 @@ class CreateProfilePage(QWidget):
         self.signals.clean_list.connect(self.clean_list)
 
         # Button event
-        self.create_profile_button.clicked.connect(self.create_profile)
+        self.create_profile_button.clicked.connect(
+            lambda _checked=False: self.create_profile(
+                profile_prefix=self.loader_list.get(
+                    self.mod_loader_dropdown.currentData(), {}
+                ).get("profilePrefix", "Minecraft"),
+            )
+        )
         self.install_java_button.clicked.connect(self.create_install_jvm_dialog)
 
         # Update version list while current type is changed
@@ -167,7 +174,7 @@ class CreateProfilePage(QWidget):
         )
 
         self.mod_loader_dropdown.currentTextChanged.connect(
-            self.update_mod_loader_icon
+            lambda _text: self.update_mod_loader_icon(self.mod_loader_dropdown.currentData())
         )
 
         self.loader_list = {
@@ -179,21 +186,31 @@ class CreateProfilePage(QWidget):
             },
             "Fabric": {
                 "type": "modded",
+                "profilePrefix": "Fabric",
                 "icon": Path(self.app.icon_dir, "modLoader", "fabric.png"),
                 "loadVersionMethod": getattr(self, "load_fabric_version_list", None),
                 "profileCreateHandler": self.handle_fabric_profile_create,
             },
             "NeoForge": {
                 "type": "modded",
+                "profilePrefix": "NeoForge",
                 "icon": Path(self.app.icon_dir, "modLoader", "neoforged.ico"),
                 "loadVersionMethod": getattr(self, "load_neoforge_version_list", None),
                 "profileCreateHandler": self.handle_neoforge_profile_create,
             },
             "Forge": {
                 "type": "modded",
+                "profilePrefix": "Forge",
                 "icon": Path(self.app.icon_dir, "modLoader", "forge.png"),
                 "loadVersionMethod": getattr(self, "load_forge_version_list", None),
                 "profileCreateHandler": self.handle_forge_profile_create,
+            },
+            "Quilt": {
+                "type": "modded",
+                "profilePrefix": "Quilt",
+                "icon": Path(self.app.icon_dir, "modLoader", "quilt.png"),
+                "loadVersionMethod": getattr(self, "load_quilt_version_list", None),
+                "profileCreateHandler": self.handle_quilt_profile_create,
             }
         }
         self.init_all()
@@ -246,7 +263,10 @@ class CreateProfilePage(QWidget):
                 handler = request.custom_handler
                 handler(request)
             else:
-                target_list.addItems(items)
+                if isinstance(target_list, QComboBox):
+                    self.add_dropdown_items(target_list, items)
+                else:
+                    target_list.addItems(items)
 
             index = request.current_index
             if index is None:
@@ -329,7 +349,9 @@ class CreateProfilePage(QWidget):
         target = request.target_list
 
         if isinstance(target, QComboBox):
-            selected_text = target.currentText()
+            selected_text = target.currentData()
+            if selected_text is None:
+                selected_text = target.currentText()
         elif isinstance(target, QListWidget):
             item = target.currentItem()
             if isinstance(item, self.DisplayListItem):
@@ -346,13 +368,27 @@ class CreateProfilePage(QWidget):
 
         request.wait_event.set()
 
+    def add_dropdown_items(self, target: QComboBox, items: list[str]):
+        labels = {}
+        if target is self.mod_loader_dropdown:
+            labels = {"Don't Install": self.app.tr_text("Don't Install")}
+        elif target is self.version_type_dropdown:
+            labels = {
+                "release": self.app.tr_text("Release"),
+                "snapshot": self.app.tr_text("Snapshot"),
+                "old_beta": self.app.tr_text("Old Beta"),
+                "old_alpha": self.app.tr_text("Old Alpha"),
+            }
+        for value in items:
+            target.addItem(labels.get(value, value), value)
+
     def update_type_dropdown(self, types: list):
         # Move release to top
         if "release" in types:
             types.pop(types.index("release"))
             types.insert(0, "release")
 
-        self.version_type_dropdown.addItems(types)
+        self.add_dropdown_items(self.version_type_dropdown, types)
 
         if len(self.version_type_dropdown.currentText()) == 0:
             self.version_type_dropdown.setCurrentIndex(0)
@@ -377,7 +413,8 @@ class CreateProfilePage(QWidget):
             display_text = ver_id
 
             if stable is not None and isinstance(stable, bool):
-                display_text = f"{ver_id}" + (" (stable)" if stable else "")
+                if stable:
+                    display_text = self.app.tr_text("{version} (stable)", version=ver_id)
 
             item = self.DisplayListItem(
                 parent=request.target_list,
@@ -414,10 +451,38 @@ class CreateProfilePage(QWidget):
         thread = threading.Thread(target=self.load_mod_loader_version)
         thread.start()
 
+    class AskProfileInfoDialog(QDialog):
+        def __init__(self, app, title: str, default_profile_name: str, parent=None,):
+            super().__init__(parent)
+            tr_text = app.tr_text
+            self.setWindowTitle(title)
+            layout = QVBoxLayout()
+
+            self.profile_name_label = QLabel(tr_text("Profile name:"))
+            self.profile_name_input = QLineEdit(default_profile_name)
+            self.use_profile_isolation = QCheckBox(tr_text("Use profile isolation"))
+            layout.addWidget(self.profile_name_label)
+            layout.addWidget(self.profile_name_input)
+            layout.addWidget(self.use_profile_isolation)
+            buttons = QDialogButtonBox(
+                QDialogButtonBox.StandardButton.Ok | QDialogButtonBox.StandardButton.Cancel,
+            )
+            buttons.button(QDialogButtonBox.StandardButton.Ok).setText(tr_text("OK"))
+            buttons.button(QDialogButtonBox.StandardButton.Cancel).setText(tr_text("Cancel"))
+            buttons.accepted.connect(self.accept)
+            buttons.rejected.connect(self.reject)
+            buttons.button(QDialogButtonBox.StandardButton.Ok).setEnabled(bool(default_profile_name.strip()))
+            self.profile_name_input.textChanged.connect(
+                lambda text: buttons.button(QDialogButtonBox.StandardButton.Ok).setEnabled(bool(text.strip()))
+            )
+            layout.addWidget(buttons)
+
+            self.setLayout(layout)
+
     #
     # Processor
     #
-    def create_profile(self):
+    def create_profile(self, profile_prefix="Minecraft"):
         request = self.GetSelectedItem(
             target_list=self.version_list,
         )
@@ -457,7 +522,7 @@ class CreateProfilePage(QWidget):
             return
 
         loader = self.loader_list[loader_name]
-        profile_create_handler: Callable[[str, str, str | None], None] = loader.get("profileCreateHandler", None)
+        profile_create_handler: Callable[..., None] = loader.get("profileCreateHandler", None)
 
         if profile_create_handler is None:
             self.widget_mgr.signal.show_warning_message.emit(
@@ -484,17 +549,17 @@ class CreateProfilePage(QWidget):
         if not loader_version and loader_version is not None:
             loader_version = None
 
-        profile_name, accepted = QInputDialog.getText(
-            self,
+        dialog = self.AskProfileInfoDialog(
+            self.app,
             self.app.tr_text("Create Profile"),
-            self.app.tr_text("Profile name:"),
-            text=f"Minecraft {minecraft_version}",
+            f"{profile_prefix} {minecraft_version}",
+            parent=self,
         )
 
-        if not accepted:
+        if dialog.exec() != QDialog.DialogCode.Accepted:
             return
 
-        profile_name = profile_name.strip()
+        profile_name = dialog.profile_name_input.text().strip()
         if not profile_name:
             self.widget_mgr.signal.show_warning_message.emit(
                 self.app.tr_text("Profile name cannot be empty."),
@@ -502,11 +567,15 @@ class CreateProfilePage(QWidget):
             return
 
         # Call handler
+        profile_dir = (
+            (Path(self.app.work_dir) / "profiles" / uuid4().hex).resolve()
+            if dialog.use_profile_isolation.isChecked() else None
+        )
         if callable(profile_create_handler):
-            profile_create_handler(profile_name, minecraft_version, loader_version)
+            profile_create_handler(profile_name, minecraft_version, loader_version, profile_dir=profile_dir)
 
     def handle_vanilla_profile_create(self, profile_name: str, version: str, loader_version: None = None,
-                                      switch_to_current=False):
+                                      switch_to_current=False, *, profile_dir: Path | None = None):
         """
         Handle vanilla profile creation.
         :param profile_name:
@@ -526,7 +595,7 @@ class CreateProfilePage(QWidget):
         version_id: str = manifest.get("id")
         version_type = manifest.get(
             "type",
-            self.version_type_dropdown.currentText() or "custom",
+            self.version_type_dropdown.currentData() or "custom",
         )
 
         if version_id is None:
@@ -537,6 +606,7 @@ class CreateProfilePage(QWidget):
 
         request = CreateProfileRequest(
             name=profile_name,
+            game_dir=profile_dir,
             version_id=version_id,
             version_type=version_type,
         )
@@ -556,7 +626,7 @@ class CreateProfilePage(QWidget):
         )
 
     def handle_fabric_profile_create(self, profile_name: str, minecraft_version: str, loader_version: str | None,
-                                     switch_to_current=False):
+                                     switch_to_current=False, *, profile_dir: Path | None = None):
         """
         Handle fabric profile creation.
         :param profile_name:
@@ -624,12 +694,13 @@ class CreateProfilePage(QWidget):
 
         request = CreateProfileRequest(
             name=profile_name,
+            game_dir=profile_dir,
             version_id=version_id,
             version_type=loader_info["type"] or vanilla_manifest["type"] or "custom",
         )
 
         profile_id = self.app.profile_manager.create_profile(
-            request
+            request,
         )
 
         if profile_id is None:
@@ -646,8 +717,100 @@ class CreateProfilePage(QWidget):
             ),
         )
 
+    def handle_quilt_profile_create(self, profile_name: str, minecraft_version: str, loader_version: str | None,
+                                     switch_to_current=False, *, profile_dir: Path | None = None):
+        """
+        Handle quilt profile creation.
+        :param profile_name:
+        :param minecraft_version:
+        :param loader_version:
+        :param switch_to_current:
+        :return:
+        """
+        if not loader_version:
+            self.widget_mgr.signal.show_warning_message.emit(
+                self.app.tr_text("Selected a quilt loader version before creating profile."),
+            )
+            return
+
+        # Create vanilla manifest
+        vanilla_manifest = self.manifest_mgr.get_cached_version_manifest(
+            minecraft_version
+        )
+        if not vanilla_manifest:
+            self.widget_mgr.signal.show_error_message.emit(
+                self.app.tr_text("Unable to create profile due to vanilla manifest fetch failure."),
+            )
+            return
+
+        version_id = quilt.get_full_version_string(version=minecraft_version, loader_version=loader_version)
+
+        def fetch_loader_manifest(_version_id: str, ) -> tuple[dict, None]:
+            manifest = quilt.get_loader_manifest_from_loader_data(
+                minecraft_version,
+                {"version": loader_version},
+            )
+            manifest["loader"] = "quilt"
+            return manifest, None
+
+        loader_manifest = self.manifest_mgr.get_cached_custom_version_manifest(
+            version_id, fetch_manifest_handler=fetch_loader_manifest, )
+
+        if not loader_manifest:
+            self.widget_mgr.signal.show_error_message.emit(
+                self.app.tr_text("Unable to create profile due to mod loader manifest fetch failure."),
+            )
+            return
+
+        loader_info = find_useful_part_in_mod_version_manifest(
+            loader_manifest
+        )
+
+        # Check mod info
+        if loader_info["id"] != version_id:
+            self.app.logger.error(f"Quilt manifest ID mismatch: expected {version_id}, got {loader_info["id"]}.")
+            self.widget_mgr.signal.show_error_message.emit(
+                self.app.tr_text("Unable to create profile. Exising loader version ID mismatch."),
+            )
+            return
+
+        if loader_info["inheritsFrom"] != minecraft_version:
+            self.app.logger.error(
+                f"Quilt manifest inherits from "
+                f'{loader_info["inheritsFrom"]}, not {minecraft_version}.'
+            )
+            self.widget_mgr.signal.show_error_message.emit(
+                self.app.tr_text("Unable to create profile. Inherits version is mismatched as expected."),
+            )
+            return
+
+        request = CreateProfileRequest(
+            name=profile_name,
+            game_dir=profile_dir,
+            version_id=version_id,
+            version_type=loader_info["type"] or vanilla_manifest["type"] or "custom",
+        )
+
+        profile_id = self.app.profile_manager.create_profile(
+            request,
+        )
+
+        if profile_id is None:
+            return
+
+        if switch_to_current:
+            if not self.app.profile_manager.set_current_profile(profile_id):
+                return
+
+        self.widget_mgr.signal.show_info_message.emit(
+            self.app.tr_text(
+                "Profile {profile_id} with quilt loader successfully created.",
+                profile_id=profile_id,
+            ),
+        )
+
     def handle_forge_profile_create(self, profile_name: str, minecraft_version: str, loader_version: str | None,
-                                    switch_to_current=False):
+                                    switch_to_current=False, *, profile_dir: Path | None = None):
         """
         Handle forge profile creation.
         :param profile_name:
@@ -658,10 +821,11 @@ class CreateProfilePage(QWidget):
         """
         self._start_forge_like_profile_create(
             "forge", profile_name, minecraft_version, loader_version, switch_to_current,
+            profile_dir=profile_dir,
         )
 
     def handle_neoforge_profile_create(self, profile_name: str, minecraft_version: str, loader_version: str | None,
-                                    switch_to_current=False):
+                                       switch_to_current=False, *, profile_dir: Path | None = None):
         """
         Handle neoforge profile creation.
         :param profile_name:
@@ -672,11 +836,12 @@ class CreateProfilePage(QWidget):
         """
         self._start_forge_like_profile_create(
             "neoforge", profile_name, minecraft_version, loader_version, switch_to_current,
+            profile_dir=profile_dir,
         )
 
     def _start_forge_like_profile_create(self, loader_name: str, profile_name: str,
-                                        minecraft_version: str, loader_version: str | None,
-                                        switch_to_current: bool = False):
+                                         minecraft_version: str, loader_version: str | None,
+                                         switch_to_current: bool = False, *, profile_dir: Path | None = None):
         if not loader_version:
             self.widget_mgr.signal.show_warning_message.emit(self.app.tr_text(
                 "Select a {loader} version before creating a profile.",
@@ -692,6 +857,7 @@ class CreateProfilePage(QWidget):
         dialog = ForgeProfileInstallDialog(
             self.app, loader_name, minecraft_version, loader_version,
             profile_name, switch_to_current=switch_to_current, parent=self,
+            profile_dir=profile_dir,
         )
         self._forge_install_dialog = dialog
         self.create_profile_button.setEnabled(False)
@@ -780,6 +946,7 @@ class CreateProfilePage(QWidget):
             self.widget_mgr.signal.show_error_message.emit(
                 self.app.tr_text("Timeout while waiting for selected version."),
             )
+            return
 
         selected_version = request.result()
 
@@ -787,9 +954,65 @@ class CreateProfilePage(QWidget):
             self.widget_mgr.signal.show_warning_message.emit(
                 self.app.tr_text("No version selected."),
             )
+            return
 
         try:
             loaders = fabric.get_version_support_loader_list(
+                selected_version
+            )
+        except LoaderUnsupportedSpecificVersion as e:
+            self.widget_mgr.signal.show_error_message.emit(
+                format_unsupported_loader_version(e, self.app.tr_text)
+            )
+            return
+        except (VersionManifestFetchException, VersionManifestException) as e:
+            self.widget_mgr.signal.show_error_message.emit(
+                self.app.tr_text(
+                    "Failed to fetch version manifest: {error}", error=e.user_message
+                ),
+            )
+            return
+        except Exception as e:
+            self.widget_mgr.signal.show_error_message.emit(
+                self.app.tr_text(
+                    "An unexpected error occurred while fetching version manifest: {error}",
+                    error=e,
+                ),
+            )
+            return
+
+        request = self.UpdateListRequest(
+            target_list=self.mod_loader_version_list,
+            items=loaders,
+            current_index=0,
+            custom_handler=self.update_version_list,
+            block_signals=True,
+        )
+        self.signals.update_list.emit(request)
+
+    def load_quilt_version_list(self):
+        self.signals.clean_list.emit(self.mod_loader_version_list)
+        request = self.GetSelectedItem(
+            target_list=self.version_list
+        )
+        self.signals.get_selected_item.emit(request)
+
+        if not request.wait(10):
+            self.widget_mgr.signal.show_error_message.emit(
+                self.app.tr_text("Timeout while waiting for selected version."),
+            )
+            return
+
+        selected_version = request.result()
+
+        if not selected_version:
+            self.widget_mgr.signal.show_warning_message.emit(
+                self.app.tr_text("No version selected."),
+            )
+            return
+
+        try:
+            loaders = quilt.get_version_support_loader_list(
                 selected_version
             )
         except LoaderUnsupportedSpecificVersion as e:
@@ -833,6 +1056,7 @@ class CreateProfilePage(QWidget):
             self.widget_mgr.signal.show_error_message.emit(
                 self.app.tr_text("Timeout while waiting for selected version."),
             )
+            return
 
         selected_version = request.result()
 
@@ -840,6 +1064,7 @@ class CreateProfilePage(QWidget):
             self.widget_mgr.signal.show_warning_message.emit(
                 self.app.tr_text("No version selected."),
             )
+            return
 
         try:
             loaders = forge_like.get_version_support_loader_list(selected_version)
@@ -884,6 +1109,7 @@ class CreateProfilePage(QWidget):
             self.widget_mgr.signal.show_error_message.emit(
                 self.app.tr_text("Timeout while waiting for selected version."),
             )
+            return
 
         selected_version = request.result()
 
@@ -891,6 +1117,7 @@ class CreateProfilePage(QWidget):
             self.widget_mgr.signal.show_warning_message.emit(
                 self.app.tr_text("No version selected."),
             )
+            return
 
         try:
             loaders = forge_like.get_version_support_loader_list(

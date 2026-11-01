@@ -203,6 +203,10 @@ class ManageProfilePage(QWidget):
         file_actions.addStretch()
         editor_layout.addLayout(file_actions)
 
+        self.plugin_actions = QHBoxLayout()
+        self.plugin_actions.addStretch()
+        editor_layout.addLayout(self.plugin_actions)
+
         actions = QHBoxLayout()
         duplicate_button = QPushButton(self.app.tr_text("Duplicate"))
         duplicate_button.clicked.connect(self.duplicate_profile)
@@ -560,6 +564,31 @@ class ManageProfilePage(QWidget):
         plugin_manager.register_api("launcher.manage_profile_page.add_page", self.add_page)
         plugin_manager.register_api("launcher.manage_profile_page.remove_page", self.remove_page)
         plugin_manager.register_api("launcher.manage_profile_page.subscribe_profile", self.subscribe_profile)
+        plugin_manager.register_api("launcher.manage_profile_page.add_action", self.add_plugin_action)
+
+    def add_plugin_action(self, text: str, callback: Callable) -> Callable[[], None]:
+        """Add an editor action and return an idempotent cleanup callback."""
+        if not isinstance(text, str) or not text.strip():
+            raise ValueError("Invalid action text")
+        if not callable(callback):
+            raise TypeError("Action callback must be callable")
+        button = QPushButton(text, self.editor)
+        button.clicked.connect(lambda: callback())
+        self.plugin_actions.insertWidget(self.plugin_actions.count() - 1, button)
+        removed = False
+
+        def cleanup():
+            nonlocal removed
+            if removed:
+                return
+            removed = True
+            self.plugin_actions.removeWidget(button)
+            button.hide()
+            button.setEnabled(False)
+            button.clicked.disconnect()
+            button.deleteLater()
+
+        return cleanup
 
     def subscribe_profile(self, callback: Callable) -> Callable[[], None]:
         """Send saved details for the editor selection, including the initial state."""

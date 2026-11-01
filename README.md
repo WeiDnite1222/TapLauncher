@@ -153,7 +153,7 @@ refresh tokens, and sign-in codes before sharing logs.
 
 ### TODO
 
-- [ ] Add support for installing Forge/Neoforge mod loader.
+- [X] Add support for installing Forge/Neoforge (even Quilt) mod loader.
 - [ ] Design the home page.
 - [ ] Add more custom settings.
 - [ ] Add a usage guide.
