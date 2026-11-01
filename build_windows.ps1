@@ -49,7 +49,8 @@ $buildArgs = @(
     '--include-module=xml.etree.ElementTree',
     '--include-raw-dir=resources/builtin_plugins=resources/builtin_plugins',
     '--noinclude-data-files=**/__pycache__/**',
-    '--noinclude-data-files=**/.DS_Store'
+    '--noinclude-data-files=**/.DS_Store',
+    "--file-version=1.0.0"
 ) + @($NuitkaOptions) + @('main.py')
 
 Push-Location -LiteralPath $PSScriptRoot
