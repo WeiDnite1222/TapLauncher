@@ -73,7 +73,7 @@ class SettingsManager:
 
         return decorator
 
-    def load(self, path: str | Path | None = None, *, reject_unknown: bool = True) -> SettingsManager:
+    def load(self, path: str | Path | None = None, *, reject_unknown: bool = False) -> SettingsManager:
         """
         Load a toml settings file
         :param reject_unknown: Raise exception if settings file contains unknown section

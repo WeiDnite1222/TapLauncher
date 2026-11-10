@@ -1,6 +1,20 @@
-# TapLauncher
+<table>
+  <tr>
+    <td width="120">
+      <img src="./assets/icon.png" alt="Icon">
+    </td>
+    <td>
+      <h1>TapLauncher</h1>
+      <p>
+        A Minecraft launcher that focuses on maximum compatibility with the
+        official Minecraft Launcher and provides a better user experience for players.
+      </p>
+    </td>
+  </tr>
+</table>
 
-# There's no stable branch because this project is still under development.
+# There's no stable branch because this project is still under development. But you can try the alpha version that
+# higher than v0.1.0a0 (stable in most time)
 
 ## How to use?
 
@@ -41,7 +55,7 @@ uv run python main.py --work-dir path_to_work_dir # With custom working director
    - macOS: use `./build_macos.sh`.
    - Windows: use `.\build_windows.ps1`.
    - Linux: use `./build_linux.sh`.
-4. Check the `build` directory for the launcher executable. All necessary files should be put in `build/TapLauncher`
+4. Check the `build` directory for the launcher executable. All files should be put in `build/TapLauncher`
    (On macOS is `build/TapLauncher.app/`).
 
 ### Themes
@@ -51,6 +65,52 @@ Its `palette.toml` defines colors, and `styles/*.qss` customizes individual page
 To create a variant, create a folder to `<work-dir>/data/themes/<your-theme-id>` and edit its `theme.toml`, palette,
 and QSS files. Restart the launcher to discover the new theme. You can copy the built-in theme folder as the reference.
 Missing QSS files use the default styles. See the [custom theme guide](resources/themes/README.md) for details.
+
+## Screenshots
+
+A quick look at the launcher's main pages and profile workflow.
+
+### Home
+
+The launcher's home page.
+
+![Home page](assets/screenshots/homepage.png)
+
+### Create a profile
+
+Set up a new game profile.
+
+![Create a profile](assets/screenshots/create_profile.png)
+
+### Manage profiles
+
+View and configure your game profiles.
+
+![Manage profiles](assets/screenshots/manage_profile.png)
+
+### Launch a profile
+
+Start the game with your selected profile.
+
+![Launch a profile](assets/screenshots/launch_profile.png)
+
+### Accounts
+
+Manage your Minecraft accounts.
+
+![Account page](assets/screenshots/account_page_001.png)
+
+### Settings
+
+Customize launcher preferences.
+
+![Settings page](assets/screenshots/settings_page_001.png)
+
+### Plugins
+
+Configure plugin support in the launcher settings.
+
+![Plugin settings](assets/screenshots/settings_plugin_support.png)
 
 ## Troubleshooting
 #### Unable to log in Microsoft account. Launcher throw error "Signing in to Minecraft services failed (HTTP 403). This account is not allowed to complete this step. Check Xbox privacy settings and account restrictions. Or check the client id has authorized to use Minecraft API."
@@ -136,6 +196,16 @@ Check the Minecraft Log window for the error preceding the exit message. An exit
 If you changed the profile's Java arguments, try restoring those arguments to their previous values.
 For a modded profile, try a separate vanilla profile for the same Minecraft version to help isolate the failure.
 
+You may need to dump the full Minecraft Log via the "Save Log" button in the Launcher Log View window. (The client
+crash reporter sometimes catches unnecessary logs or cuts off the full error report)
+
+### Apple Silicon Mac Support
+
+For current versions of the launcher, the issue is **impossible to resolve**.
+
+The first Minecraft version that supports Apple Silicon Mac is 1.19. The older versions may crash or behave unexpectedly
+when running on Apple Silicon Mac. Even if you have Rosetta 2 installed, the experience may be suboptimal, even encountering
+inverted colors screen issue (see [this](https://www.reddit.com/r/Minecraft/comments/11p9ovm/minecraft_renders_with_inverted_colors_on_apple/))
 ### Collecting debug information
 
 Run the launcher from a terminal with debug logging enabled:
