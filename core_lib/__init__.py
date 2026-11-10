@@ -1,4 +1,4 @@
-__version__ = '0.1.7'
+__version__ = '0.1.8'
 __description__ = """
 A library for Python-based block game launcher.
 
@@ -184,7 +184,7 @@ from .game.library_core import (
     collect_native_artifacts,
     download_libraries,
     unzip_natives,
-    check_libraries_exists,
+    check_libraries_exists_and_verify,
     check_natives_exists,
     check_full_libraries_exists,
     generate_classpath,
@@ -527,7 +527,7 @@ __all__ = [
     "collect_native_artifacts",
     "download_libraries",
     "unzip_natives",
-    "check_libraries_exists",
+    "check_libraries_exists_and_verify",
     "check_natives_exists",
     "check_full_libraries_exists",
     "generate_classpath",

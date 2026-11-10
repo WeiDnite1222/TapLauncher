@@ -63,7 +63,7 @@ def fetch_asset_manifest(target_version_manifest: dict, raw=False) -> tuple[dict
             "Unable to deserialize asset response data into dictionary: {} ".format(e)
         )
 
-def fetch_and_save_asset_manifest(target_version_manifest: dict, destination: Path) -> dict:
+def fetch_and_save_asset_manifest(target_version_manifest: dict, destination: Path, *, verify_hash=True) -> dict:
     """
     Fetch the asset manifest from target version's manifest and save it.
     :param target_version_manifest:
@@ -89,7 +89,7 @@ def fetch_and_save_asset_manifest(target_version_manifest: dict, destination: Pa
         with file.path.open("wb") as f:
             f.write(data)
 
-        if sha1 and not file.verify_sha1(sha1):
+        if verify_hash and sha1 and not file.verify_sha1(sha1):
             raise HashMismatchException(
                 "sha1",
                 file.sha1,
@@ -286,7 +286,7 @@ def download_assets_and_copy(assets: list[FileObject], legacy_assets: list[dict]
                 if old_asset.path.stat().st_size == size:
                     logger.debug("Asset {} already exists. (no_hash_check=True)".format(target))
                     return True, None
-            elif sha1 and old_asset.verify("sha1", sha1):
+            elif not no_hash_check and sha1 and old_asset.verify("sha1", sha1):
                 logger.debug("Asset {} already exists.".format(target))
                 return True, None
 
@@ -294,7 +294,7 @@ def download_assets_and_copy(assets: list[FileObject], legacy_assets: list[dict]
         return True, destination
 
     fails , _ = download_multiple_files(assets, progress_callback=progress_callback,
-                                        max_workers=ASSET_DOWNLOAD_MAX_WORKERS)
+                                        max_workers=ASSET_DOWNLOAD_MAX_WORKERS, verify_hash=not no_hash_check)
 
 
     download_ok = len(fails) == 0
@@ -311,7 +311,7 @@ def download_assets_and_copy(assets: list[FileObject], legacy_assets: list[dict]
             return fails
 
     # Use thread pool to handle copy file process
-    with ThreadPoolExecutor(max_workers=ASSET_DOWNLOAD_MAX_WORKERS) as executor:
+    with ThreadPoolExecutor(max_workers=ASSET_DOWNLOAD_MAX_WORKERS, verify_hash=not no_hash_check) as executor:
         futures = [
             executor.submit(
                 __worker,
@@ -395,7 +395,7 @@ def download_assets(manifest: dict, assets_dir: Path, launcher_root: Path, no_ha
 
     if index_path.is_file():
         try:
-            if not index_sha1 or FileObject(index_path).verify_sha1(index_sha1):
+            if no_hash_check or not index_sha1 or FileObject(index_path).verify_sha1(index_sha1):
                 cached = json.loads(index_path.read_text(encoding="utf-8"))
 
                 if isinstance(cached, dict) and isinstance(cached.get("objects"), dict) and cached["objects"]:
@@ -405,7 +405,7 @@ def download_assets(manifest: dict, assets_dir: Path, launcher_root: Path, no_ha
             logger.warning("Unable to read cached asset index: %s", index_path)
 
     if asset_manifest is None:
-        asset_manifest = fetch_and_save_asset_manifest(manifest, index_path)
+        asset_manifest = fetch_and_save_asset_manifest(manifest, index_path, verify_hash=not no_hash_check)
 
     # Download assets files
     assets, legacy_assets = collect_assets_from_manifest(

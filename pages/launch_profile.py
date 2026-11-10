@@ -8,8 +8,9 @@ from PySide6.QtWidgets import (QWidget, QVBoxLayout, QLabel, QHBoxLayout, QPushB
 from core_lib.qt.item_button import ItemButton
 from manager.game import LaunchManager, LaunchResult
 from core_lib.game.version_info import LATEST_VERSION_ALIASES
-from manager.profile import ProfileSummary, LaunchProfile, ProfileManager
+from manager.profile import ProfileSummary, LaunchProfile, ProfileManager, _profile_icon
 from manager.widgets import AskForRequest, WidgetManager
+from manager.settings_models import AppearanceSettings
 from pages.process_log import ProcessLogWindow
 
 
@@ -68,16 +69,8 @@ class ProfileButton(QFrame):
         self.name_label.setText(profile.display_name)
         self.version_label.setText(profile.version_id)
 
-        icon_path = profile.icon
-
-        if not isinstance(icon_path, Path):
-            icon_path = Path(icon_path)
-
-        if not icon_path.exists() or not icon_path.is_file():
-            # Use default
-            icon_path = Path(self.app.icon_dir, "profile_default.png")
-
-        self.icon_label.setPixmap(QIcon(icon_path.as_posix()).pixmap(36, 36))
+        icon = profile.icon
+        self.icon_label.setPixmap(_profile_icon(icon, self.app.icon_dir).pixmap(36, 36))
 
     def set_popup_open(self, opened: bool) -> None:
         self.arrow_label.setText("▴" if opened else "▾")
@@ -121,8 +114,8 @@ class ProfileListItem(ItemButton):
         layout.addLayout(text_layout, 1)
         self.clicked.connect(lambda: self.selected.emit(self.profile))
 
-    def set_icon(self, icon_path: Path) -> None:
-        self.icon_label.setPixmap(QIcon(icon_path.as_posix()).pixmap(36, 36))
+    def set_icon(self, icon: QPixmap) -> None:
+        self.icon_label.setPixmap(icon)
 
 class ProfilePopup(QFrame):
     profile_selected = Signal(object)
@@ -166,18 +159,9 @@ class ProfilePopup(QFrame):
         self.clean_profiles()
 
         for profile in profiles:
-            icon_path = profile.icon
-
-            if not isinstance(icon_path, Path):
-                icon_path = Path(icon_path)
-
-            if not icon_path.exists() or not icon_path.is_file():
-                # Use default
-                icon_path = Path(self.app.icon_dir, "profile_default.png")
-
             item = ProfileListItem(profile, self)
             item.selected.connect(self.profile_selected)
-            item.set_icon(icon_path)
+            item.set_icon(_profile_icon(profile.icon, self.app.icon_dir).pixmap(36, 36))
             self.content_layout.addWidget(item)
 
     def clean_profiles(self) -> None:
@@ -293,10 +277,25 @@ class LaunchProfilePage(QWidget):
             self.load_profiles,
         )
 
+    def showEvent(self, event):
+        super().showEvent(event)
+        appearance = self.app.settings_manager.get("appearance", AppearanceSettings)
+        self.profile_frame.set_background(
+            appearance.launch_background,
+            Path(self.app.icon_dir, "profile_default.png"),
+        )
+
     class ProfileBackgroundFrame(QFrame):
         def __init__(self, image_path, parent=None):
             super().__init__(parent)
             self.background = QPixmap(str(image_path))
+
+        def set_background(self, path, default_path):
+            background = QPixmap(str(path)) if path else QPixmap()
+            if background.isNull():
+                background = QPixmap(str(default_path))
+            self.background = background
+            self.update()
 
         def paintEvent(self, event):
             super().paintEvent(event)

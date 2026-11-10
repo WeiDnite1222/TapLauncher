@@ -2,8 +2,9 @@ import uuid
 from pathlib import Path
 
 from PySide6.QtCore import Qt
+from PySide6.QtGui import QImageReader, QPixmap
 from PySide6.QtWidgets import (
-    QComboBox,
+    QComboBox, QCheckBox, QFileDialog,
     QHBoxLayout,
     QLabel,
     QLineEdit,
@@ -18,7 +19,7 @@ from PySide6.QtWidgets import (
 from constant import LAUNCHER_NAME, LAUNCHER_VERSION, LAUNCHER_DESCRIPTION_KEYWORD, \
     LAUNCHER_DESCRIPTION_MARKDOWN, LAUNCHER_DESCRIPTION_MARKDOWN_KEYWORD
 from core_lib.qt import messagebox
-from manager.settings_models import AccountSettings, AppearanceSettings, GeneralSettings
+from manager.settings_models import AccountSettings, AppearanceSettings, GeneralSettings, GameSettings
 from pages.plugins import PluginsDialog
 
 LANGUAGE_LABELS = {
@@ -104,6 +105,7 @@ class SettingsPage(QWidget):
 
         self.main_page = self._create_main_page()
         self.general_page = self._create_general_page()
+        self.game_page = self._create_game_page()
         self.appearance_page = self._create_appearance_page()
         self.account_page = self._create_account_page()
         self.about_page = self._create_about_page()
@@ -111,6 +113,7 @@ class SettingsPage(QWidget):
         for page in (
                 self.main_page,
                 self.general_page,
+                self.game_page,
                 self.appearance_page,
                 self.account_page,
                 self.about_page,
@@ -147,12 +150,14 @@ class SettingsPage(QWidget):
 
         self.main_page = self._create_main_page()
         self.general_page = self._create_general_page()
+        self.game_page = self._create_game_page()
         self.appearance_page = self._create_appearance_page()
         self.account_page = self._create_account_page()
         self.about_page = self._create_about_page()
         for page in (
                 self.main_page,
                 self.general_page,
+                self.game_page,
                 self.appearance_page,
                 self.account_page,
                 self.about_page,
@@ -189,6 +194,7 @@ class SettingsPage(QWidget):
 
         pages = (
             (tr("General"), tr("Language and launcher directories"), "general_page"),
+            (tr("Game"), tr("Game file hash verification"), "game_page"),
             (tr("Appearance"), tr("Launcher theme"), "appearance_page"),
             (tr("Account"), tr("Microsoft authentication settings"), "account_page"),
             (tr("About"), tr("Version and project information"), "about_page"),
@@ -239,6 +245,19 @@ class SettingsPage(QWidget):
         page.content_layout.addWidget(self.language_combo)
         return page
 
+    def _create_game_page(self) -> QWidget:
+        tr = self.app.tr_text
+        page = SettingsSubPage(tr("Game"), self._go_back)
+        current = self.settings.get("game", GameSettings)
+        self.verify_hash_on_download = QCheckBox(tr("Verify file hashes when downloading"))
+        self.verify_hash_on_download.setChecked(current.verify_hash_on_download)
+        self.verify_hash_on_launch = QCheckBox(tr("Verify library hashes before launch"))
+        self.verify_hash_on_launch.setChecked(current.verify_hash_on_launch)
+        for checkbox in (self.verify_hash_on_download, self.verify_hash_on_launch):
+            checkbox.toggled.connect(self._mark_settings_dirty)
+            page.content_layout.addWidget(checkbox)
+        return page
+
     def _create_appearance_page(self) -> QWidget:
         tr = self.app.tr_text
         page = SettingsSubPage(tr("Appearance"), self._go_back)
@@ -260,7 +279,66 @@ class SettingsPage(QWidget):
         help_label.setObjectName("settingsHelpText")
         help_label.setWordWrap(True)
         page.content_layout.addWidget(help_label)
+        page.content_layout.addWidget(QLabel(tr("Launch page background")))
+        self.launch_background = current.launch_background
+        self.background_preview = QLabel()
+        self.background_preview.setFixedSize(320, 180)
+        self.background_preview.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        page.content_layout.addWidget(self.background_preview)
+        self._update_background_preview()
+        background_actions = QHBoxLayout()
+        choose_background = QPushButton(tr("Choose background image"))
+        choose_background.clicked.connect(self._choose_launch_background)
+        reset_background = QPushButton(tr("Restore default background"))
+        reset_background.clicked.connect(self._reset_launch_background)
+        background_actions.addWidget(choose_background)
+        background_actions.addWidget(reset_background)
+        background_actions.addStretch()
+        page.content_layout.addLayout(background_actions)
         return page
+
+    def _update_background_preview(self):
+        path = self.launch_background or str(Path(self.app.icon_dir, "profile_default.png"))
+        pixmap = QPixmap(path)
+        self.background_preview.setPixmap(pixmap.scaled(
+            320, 180, Qt.AspectRatioMode.KeepAspectRatio,
+            Qt.TransformationMode.SmoothTransformation,
+        ))
+
+    def _choose_launch_background(self):
+        formats = " ".join("*." + bytes(fmt).decode("ascii")
+                           for fmt in QImageReader.supportedImageFormats())
+        filename, _ = QFileDialog.getOpenFileName(
+            self, self.app.tr_text("Choose background image"), "",
+            self.app.tr_text("Images") + f" ({formats})",
+        )
+        if not filename:
+            return
+        reader = QImageReader(filename)
+        reader.setDecideFormatFromContent(True)
+        reader.setAutoTransform(True)
+        image = reader.read()
+        if image.isNull():
+            QMessageBox.warning(self, self.app.tr_text("Settings error"),
+                                self.app.tr_text("Image format is not supported."))
+            return
+        try:
+            directory = Path(self.app.work_dir) / "backgrounds"
+            directory.mkdir(parents=True, exist_ok=True)
+            destination = directory / f"{uuid.uuid4().hex}.png"
+            if not image.save(str(destination), "PNG"):
+                raise OSError(self.app.tr_text("Unable to save background image."))
+        except OSError as error:
+            QMessageBox.warning(self, self.app.tr_text("Settings error"), str(error))
+            return
+        self.launch_background = str(destination.resolve())
+        self._update_background_preview()
+        self._mark_settings_dirty()
+
+    def _reset_launch_background(self):
+        self.launch_background = ""
+        self._update_background_preview()
+        self._mark_settings_dirty()
 
     def _create_account_page(self) -> QWidget:
         tr = self.app.tr_text
@@ -323,6 +401,7 @@ class SettingsPage(QWidget):
 
         description_text = self.app.tr_text(LAUNCHER_DESCRIPTION_MARKDOWN_KEYWORD)
         description = QTextBrowser()
+        # description.setVerticalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOn)
         description.setObjectName("settingsDescription")
         description.setReadOnly(True)
         description.setOpenExternalLinks(True)
@@ -424,7 +503,10 @@ class SettingsPage(QWidget):
         old_theme = self.settings.get("appearance", AppearanceSettings).theme
         data = {
             "general": {"language": self.language_combo.currentData()},
-            "appearance": {"theme": self.theme_combo.currentData()},
+            "game": {"verify_hash_on_download": self.verify_hash_on_download.isChecked(),
+                     "verify_hash_on_launch": self.verify_hash_on_launch.isChecked()},
+            "appearance": {"theme": self.theme_combo.currentData(),
+                           "launch_background": self.launch_background},
             "account": {"custom_client_id": client_id if client_id else None,
                         "credentials_save_method": selected_credentials_method,
                         "token_refresh_interval":

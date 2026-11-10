@@ -11,7 +11,7 @@ from typing import Callable
 import requests
 
 from core_lib.common.exception import LauncherException, AuthenticationSessionException, AuthenticationConnectException, \
-    AuthenticationException, LauncherHTTPException
+    AuthenticationException
 
 MICROSOFT_DEVICE_CODE_URL = "https://login.microsoftonline.com/consumers/oauth2/v2.0/devicecode"
 MICROSOFT_TOKEN_URL = "https://login.microsoftonline.com/consumers/oauth2/v2.0/token"
@@ -28,8 +28,8 @@ def auth_exception_handler(request_handler: Callable, request_type: str = "witho
     Handle authentication exceptions
     :param stage:
     :param request_handler:
-    :param request_type: Set this will change exception type when an error occurs. ("without_token" for process that
-    don't use token, "with_token" for process that use token. If with token, exception usually throw
+    :param request_type: Set this will change the exception type when an error occurs. ("without_token" for processes that
+    don't use token, "with_token" for processes that use token. If with token, exception usually throws
     AuthenticationSessionException. If not, throw AuthenticationException instead)
     :return:
     """
@@ -58,8 +58,8 @@ def auth_exception_handler(request_handler: Callable, request_type: str = "witho
         except (TypeError, ValueError):
             pass
 
-        # Below are the xsts error code suggestions. Why return that value (error is integer not string) ?
-        # Maybe it makes international support more easily?
+        # Below are the xsts error code suggestions. Why return that value (error is integer, not string)?
+        # Maybe it makes international support more easy?
         xsts_suggestions = {
             2148916233: "This Microsoft account does not have an Xbox profile. Sign in at xbox.com and create one, then try again.",
             2148916235: "Xbox Live is not available for this account's country or region.",
@@ -74,7 +74,7 @@ def auth_exception_handler(request_handler: Callable, request_type: str = "witho
             ) from e
 
         server_message = response_data.get("Message") or response_data.get("error_description")
-        # This suggestions can make user happy instead of seeing an HTTP error code
+        # These suggestions can make user happy instead of seeing an HTTP error code
         suggestions = {
             400: "The authentication request or session was rejected.",
             401: "The login session is invalid or expired. Sign in again.",

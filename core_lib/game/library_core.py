@@ -2,16 +2,17 @@ import logging
 import re
 import zipfile
 from pathlib import Path, PureWindowsPath
-from typing import Callable
+from typing import Callable, Literal
 
 from .argument import convert_argument_to_multiple_string, find_game_and_jvm_args, is_argument_allowed
 from .library import get_natives_platform_info, is_library_allowed, generate_formatted_artifact_with_name, \
     is_native_allowed, is_legacy_native_allowed, remove_duplicate_artifacts
 from .libraryx import normalize_library_to_common_struct
-from ..common.common import get_platform_info, FileObject, download_multiple_files, unzip, is_valid_zipfile
+from ..common.common import get_platform_info, FileObject, download_multiple_files, unzip, is_valid_zipfile, \
+    SUPPORTED_HASH_ALGORITHMS
 from .version_info import find_useful_part_in_specific_version_manifest
 from ..common.exception import UnsupportedPlatformException, NativeResolveException, DependencyException, \
-    VersionDataKeyNotFoundException, DownloadException
+    VersionDataKeyNotFoundException, DownloadException, HashMismatchException
 
 logger = logging.getLogger("Launcher.CoreLib")
 
@@ -234,7 +235,7 @@ def collect_native_artifacts(specific_version_manifest):
     return items
 
 
-def download_libraries(artifacts, output_dir, progress_callback: Callable[[str, float], None] = None) \
+def download_libraries(artifacts, output_dir, progress_callback: Callable[[str, float], None] = None, *, verify_hash=True) \
         -> tuple[list[FileObject], list[FileObject]]:
     """
     Download libraries from a list that contains artifacts
@@ -267,13 +268,17 @@ def download_libraries(artifacts, output_dir, progress_callback: Callable[[str, 
             full_path,
             url=url,
             sha1=sha1,
+            sha256=sha256,
+            sha512=sha512,
         )
 
         if sha1 is None:
             logger.warning(f"File {full_path} has no SHA1 hash.")
 
         if file.exists:
-            if sha1 is not None:
+            if not verify_hash:
+                valid = full_path.is_file()
+            elif sha1 is not None:
                 valid = file.verify("sha1", sha1)
             elif sha256 is not None:
                 valid = file.verify("sha256", sha256)
@@ -290,7 +295,7 @@ def download_libraries(artifacts, output_dir, progress_callback: Callable[[str, 
 
         files.append(file)
 
-    fails, finished = download_multiple_files(files, progress_callback=progress_callback)
+    fails, finished = download_multiple_files(files, progress_callback=progress_callback, verify_hash=verify_hash)
     successes.extend(finished)
 
     return fails, successes
@@ -328,15 +333,31 @@ def unzip_natives(filtered, libraries_dir, destination: Path):
         logger.debug(f"Unzipped {full_path}.")
 
 
-def check_libraries_exists(manifest: dict, libraries_dir: Path):
+def check_libraries_exists_and_verify(manifest, libraries_dir, verify_hash=True,
+    allow_algorithms=None, *, throw_error_if_missing_hash=False):
     """
-    Check if libraries are present in the libraries directory
+    Check if libraries are present in the libraries directory and verify their hash (if required)
     :param manifest:
     :param libraries_dir:
+    :param verify_hash: Whether to verify the hash of the library. Defaults to True.
+    :param throw_error_if_missing_hash: Whether to throw an error if a library is missing a hash. Defaults to False.
+    (Only working when verify_hash is True)
+    :param allow_algorithms: The allowed algorithms to use for hash verification. Defaults to SUPPORTED_HASH_ALGORITHMS
+    (in corelib.common.common)
     :return:
         not_found: list
     """
     libraries = manifest.get("libraries", [])
+
+    if allow_algorithms is None:
+        allow_algorithms = SUPPORTED_HASH_ALGORITHMS
+
+    if verify_hash and not allow_algorithms:
+        raise ValueError("algorithm must be provided if verify_hash is True")
+
+    for alog in allow_algorithms or []:
+        if alog not in SUPPORTED_HASH_ALGORITHMS:
+            raise ValueError(f"Unsupported algorithm: {alog}")
 
     if not libraries:
         raise VersionDataKeyNotFoundException(
@@ -379,12 +400,43 @@ def check_libraries_exists(manifest: dict, libraries_dir: Path):
             logger.warning(f"Artifact {name} are not valid. Skipping...")
             continue
 
-        relative_path = artifact.get("path")
+        relative_path = artifact["path"] # Is safe because generate_formatted_artifact_with_name will check
+        # the "path" key.
         full_path = libraries_dir / Path(relative_path)
 
         if not full_path.is_file() or not full_path.exists():
             logger.debug(f"Artifact {name} missing.")
             not_found.append(full_path)
+            continue
+
+        if verify_hash:
+            expected = None
+            used_alog = None
+
+            # Get expected hash
+            for alog in allow_algorithms or []:
+                expected = artifact.get(alog, None)
+                if expected:
+                    used_alog = alog
+                    break
+
+            # Verify hash
+            if used_alog:
+                f = FileObject(full_path)
+                if not f.verify(used_alog, expected):
+                    logger.debug(f"Hash mismatch for {full_path} with algorithm {used_alog}")
+                    not_found.append(full_path)
+                    continue
+                else:
+                    logger.debug(f"Hash match for {full_path} with algorithm {used_alog}")
+            else:
+                if throw_error_if_missing_hash:
+                    raise VersionDataKeyNotFoundException(
+                        f"Library {name} does not provide any hash that type is allowed in {allow_algorithms}"
+                    )
+
+                # Show warning if there's no support algorithm in the artifact
+                logger.warning(f"Library {name} does not provide any hash that type is allowed in {allow_algorithms}")
 
     return not_found
 
@@ -518,16 +570,17 @@ def check_natives_exists(manifest: dict, libraries_dir: Path, natives_dir: Path,
 
 
 def check_full_libraries_exists(manifest: dict, libraries_dir: Path, natives_dir: Path, *,
-                                features: dict | None = None) -> bool:
+                                features=None, verify_hash=True,) -> bool:
     natives_exist = check_natives_exists(
         manifest,
         libraries_dir,
         natives_dir,
         features=features,
     )
-    missing_libraries = check_libraries_exists(
+    missing_libraries = check_libraries_exists_and_verify(
         manifest,
         libraries_dir,
+        verify_hash=verify_hash,
     )
 
     return natives_exist and not missing_libraries
@@ -604,7 +657,7 @@ def download_full_libraries(manifest: dict, libraries_dir: Path, default_natives
                             progress_callback: Callable[[str, float], None] = None,
                             redownload_callback: Callable[
                                 [list[FileObject]], tuple[bool, list[FileObject]]] = None, *,
-                            features: dict | None = None) -> None:
+                            features: dict | None = None, verify_hash=True) -> None:
     natives_dir = locate_natives_extract_dir_by_manifest(manifest, default_natives_dir, features=features)
     # libraries
     libraries = collect_library_artifacts(manifest)
@@ -621,7 +674,7 @@ def download_full_libraries(manifest: dict, libraries_dir: Path, default_natives
     )
 
     # Start download
-    fails, successes = download_libraries(full, libraries_dir, progress_callback=progress_callback)
+    fails, successes = download_libraries(full, libraries_dir, progress_callback=progress_callback, verify_hash=verify_hash)
 
     download_ok = len(fails) == 0
 

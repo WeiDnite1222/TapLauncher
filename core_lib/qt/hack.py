@@ -1,8 +1,9 @@
 import base64
+import binascii
 from pathlib import Path
 
-from PySide6.QtCore import QCoreApplication, QThread, QSize, Qt
-from PySide6.QtGui import QScreen, QPixmap, QPainter, QPalette, QIcon, QColor, QImage
+from PySide6.QtCore import QCoreApplication, QThread, QSize, Qt, QBuffer, QIODevice
+from PySide6.QtGui import QScreen, QPixmap, QPainter, QPalette, QIcon, QColor, QImage, QImageReader
 from PySide6.QtWidgets import QMainWindow, QApplication, QWidget, QDialog
 
 
@@ -123,5 +124,61 @@ def data_url_to_qt_image(data_url: str) -> QImage:
         raise ValueError("Qt does not support this image")
 
     return image
+
+def base64_to_qicon(value: str) -> QIcon:
+    if value.startswith("data:"):
+        header, separator, value = value.partition(",")
+        if not separator or ";base64" not in header:
+            return QIcon()
+
+    try:
+        data = base64.b64decode("".join(value.split()), validate=True)
+    except (ValueError, binascii.Error):
+        return QIcon()
+
+    pixmap = QPixmap()
+    if not pixmap.loadFromData(data):
+        return QIcon()
+
+    return QIcon(pixmap)
+
+def is_qt_supported_image(path: Path) -> tuple[bool, str | None]:
+    if not path.is_file():
+        return False, None
+
+    reader = QImageReader(str(path))
+    reader.setDecideFormatFromContent(True)
+
+
+    if not reader.canRead():
+        return False, None
+    image_format = bytes(reader.format()).decode("ascii").lower() or None
+    return not reader.read().isNull(), image_format
+
+def image_to_data_url(path: Path, mime_type: str) -> str:
+    encoded = base64.b64encode(path.read_bytes()).decode("ascii")
+    return f"data:{mime_type};base64,{encoded}"
+
+
+def prepare_profile_icon(path: Path) -> tuple[str, bool]:
+    """Validate and encode a square profile icon as a 128px PNG."""
+    reader = QImageReader(str(path))
+    reader.setDecideFormatFromContent(True)
+    reader.setAutoTransform(True)
+    image = reader.read()
+    if image.isNull():
+        raise ValueError("Image format is not supported.")
+    if image.width() != image.height() or image.width() < 128:
+        raise ValueError("Profile icons must be square and at least 128 x 128 pixels.")
+    resized = image.width() > 128
+    if resized:
+        image = image.scaled(128, 128, Qt.AspectRatioMode.KeepAspectRatio,
+                             Qt.TransformationMode.SmoothTransformation)
+    buffer = QBuffer()
+    buffer.open(QIODevice.OpenModeFlag.WriteOnly)
+    if not image.save(buffer, "PNG"):
+        raise ValueError("Unable to encode profile icon.")
+    encoded = base64.b64encode(bytes(buffer.data())).decode("ascii")
+    return f"data:image/png;base64,{encoded}", resized
 
 # ======================== AI generated END ========================

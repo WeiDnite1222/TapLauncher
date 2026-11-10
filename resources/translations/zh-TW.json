@@ -1,4 +1,23 @@
 {
+  "Reset Icon": "重設圖示",
+  "Profile icons must be square and at least 128 x 128 pixels.": "不支援此圖片：設定檔圖示必須是正方形，且尺寸至少為 128×128 像素。",
+  "This image exceeds 128 x 128 pixels and will be resized to 128 x 128.": "此圖片超過 128×128 像素，將縮小為 128×128。",
+  "Unable to encode profile icon.": "無法編碼設定檔圖示。",
+  "Image file does not exist or is not a file": "圖片檔案不存在或不是檔案",
+  "Unable to set profile icon. Icon may invalid.": "無法設定設定檔圖示，圖示可能無效。",
+  "Launch page background": "啟動頁背景",
+  "Choose background image": "選擇背景圖片",
+  "Restore default background": "恢復預設背景",
+  "Unable to save background image.": "無法儲存背景圖片。",
+  "Replace Icon": "替換圖示",
+  "Images": "圖片",
+  "All files": "所有檔案",
+  "Image format is not supported.": "圖片格式不支援或檔案已損壞。",
+  "Select a profile before replacing the icon": "請先選取要替換圖示的設定檔",
+  "Game": "遊戲",
+  "Game file hash verification": "遊戲檔案雜湊驗證",
+  "Verify file hashes when downloading": "下載時驗證檔案雜湊",
+  "Verify library hashes before launch": "啟動前驗證函式庫雜湊",
   "OK": "確定",
   "Old Alpha": "舊版 Alpha",
   "Old Beta": "舊版 Beta",
@@ -402,6 +421,6 @@
   "{loader} does not support Minecraft {version}.": "{loader} 不支援 Minecraft {version}。",
   "{account} is currently signed in.": "{account} 目前已登入。",
   "{account}'s session has expired.": "{account} 的工作階段已過期。",
-  "$ABOUT_THIS_LAUNCHER": "一個使用Python編寫的非官方 Minecraft 啟動器。旨在與官方啟動器保持最大程度的兼容，同時更加輕量且易於使用。\n\n本啟動器和 Mojang 工作室 或 Microsoft 沒有任何隸屬關係。只是一個為了好玩而開開發的專案。",
-  "$ABOUT_THIS_LAUNCHER_MARKDOWN": "一個使用Python編寫的非官方 Minecraft 啟動器。\n旨在與官方啟動器保持最大程度的兼容，同時更加輕量且易於使用。\n\n\n*本啟動器和 Mojang 工作室 或 Microsoft 沒有任何隸屬關係。只是一個為了好玩而開開發的專案。*\n\n\n\n### 鳴謝\n- [PySide6](https://pypi.org/project/PySide6/): GUI 框架\n- [Nuitka](https://nuitka.net/): 構建工具\n- [Minecraft Wiki](https://minecraft.fandom.com/wiki/Main_Page): 帳號系統和啟動器開發參考\n\n\n### 開發者\n- [Wei](https://repo.weispace.net/wei): 主要開發者"
+  "$ABOUT_THIS_LAUNCHER": "一個使用Python編寫的非官方 Minecraft 啟動器。旨在與官方啟動器保持最大程度的兼容，同時更加輕量且易於使用。\n\n本啟動器和 Mojang 工作室 或 Microsoft 沒有任何隸屬關係。只是一個為了好玩而開發的專案。",
+  "$ABOUT_THIS_LAUNCHER_MARKDOWN": "一個使用Python編寫的非官方 Minecraft 啟動器。\n旨在與官方啟動器保持最大程度的兼容，同時更加輕量且易於使用。\n\n\n*本啟動器和 Mojang 工作室 或 Microsoft 沒有任何隸屬關係。只是一個為了好玩而開發的專案。*\n\n\n\n### 鳴謝\n- [PySide6](https://pypi.org/project/PySide6/): GUI 框架\n- [Nuitka](https://nuitka.net/): 構建工具\n- [Minecraft Wiki](https://minecraft.wiki/): 帳號系統和啟動器開發參考 ([Writing a launcher](https://zh.minecraft.wiki/w/Tutorial:%E7%BC%96%E5%86%99%E5%90%AF%E5%8A%A8%E5%99%A8))\n\n\n### 開發者\n- [Wei](https://repo.weispace.net/wei): 主要開發者"
 }

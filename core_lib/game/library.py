@@ -170,7 +170,8 @@ def get_natives_platform_info():
     return platform_key_name, platform_rule_name, platform_arch_type
 
 
-def is_native_allowed(lib_name, platform_key_name, platform_arch_type, unspecified_arch_policy: str = "x86_64") -> bool:
+def is_native_allowed(lib_name, platform_key_name, platform_arch_type,
+                      unspecified_arch_policy: str = "x86_64") -> bool:
     # Parse native key
     match = re.search(r":(natives-[^:]+)$", lib_name)
 

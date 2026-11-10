@@ -33,6 +33,7 @@ class AppearanceSettings(WarnExtraModel):
     model_config = ConfigDict()
 
     theme: str = "system"
+    launch_background: str = ""
 
     @field_validator("theme")
     @classmethod
@@ -84,3 +85,7 @@ class PageBarSettings(WarnExtraModel):
     focus_at_after_restart: bool = False
     last_focused_page: str = ""
     page_bar_position: Literal["left", "right", "top", "bottom"] = "left"
+
+class GameSettings(WarnExtraModel):
+    verify_hash_on_download: bool = True
+    verify_hash_on_launch: bool = True

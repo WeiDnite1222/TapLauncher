@@ -1,4 +1,4 @@
-LAUNCHER_VERSION = "0.1.4-alpha"
+LAUNCHER_VERSION = "0.1.5-alpha"
 LAUNCHER_NAME = "TapLauncher"
 LAUNCHER_DIR_NAME = "TapLauncher"
 MAIN_REPO_URL = "https://repo.weispace.net/wei/Launcher/"
@@ -26,7 +26,8 @@ It aims to maintain maximum compatibility with the official Minecraft
 ### Credits
 - [PySide6](https://pypi.org/project/PySide6/): GUI framework
 - [Nuitka](https://nuitka.net/): Build tool
-- [Minecraft Wiki](https://minecraft.fandom.com/wiki/Main_Page): Account system and launcher development reference
+- [Minecraft Wiki](https://minecraft.wiki/): Account system and launcher development reference
+ ([Writing a launcher](https://zh.minecraft.wiki/w/Tutorial:%E7%BC%96%E5%86%99%E5%90%AF%E5%8A%A8%E5%99%A8))
 \n
 ### Developer
 - [Wei](https://repo.weispace.net/wei): Main developer

@@ -186,7 +186,8 @@ def generate_random_suffix():
     return "".join(random.choices(string.ascii_lowercase + string.digits, k=8))
 
 def download_file(file: FileObject, overwrite=True, progress_callback: Callable[int]=None,
-                  safe_download=True, max_temp_suffix_retry=5) -> FileObject | Exception:
+                  safe_download=True, max_temp_suffix_retry=5,
+                  *, timeout=5, verify_hash=True) -> FileObject | Exception:
     """
     Download the file from url
     :param file: File (Objected)
@@ -194,6 +195,7 @@ def download_file(file: FileObject, overwrite=True, progress_callback: Callable[
     :param progress_callback: Callback function called with progress information
     :param safe_download: Download the file at temp location. If hash matches, Replace the old one with the new one
     :param max_temp_suffix_retry: Maximum number of retries for generating a unique temp file suffix
+    :param timeout: Timeout for the download request
     :return:
     """
 
@@ -230,7 +232,7 @@ def download_file(file: FileObject, overwrite=True, progress_callback: Callable[
     try:
         target_file.invalidate_hash_cache()  # Clean cache hash
         try:
-            with requests.get(target_file.url, stream=True) as r:
+            with requests.get(target_file.url, stream=True, timeout=timeout) as r:
                 r.raise_for_status()
                 current_chunk = 0
                 total_bytes = r.headers.get("content-length", None)
@@ -255,18 +257,18 @@ def download_file(file: FileObject, overwrite=True, progress_callback: Callable[
         finally:
             target_file.invalidate_hash_cache()
 
-        if target_file.expected_sha256 and not target_file.verify_sha256():
+        if verify_hash and target_file.expected_sha256 and not target_file.verify_sha256():
             raise HashMismatchException("sha256", target_file.sha256, target_file.expected_sha256,
                                         target_file.posix_path)
-        elif target_file.expected_sha1 and not target_file.verify_sha1():
+        elif verify_hash and target_file.expected_sha1 and not target_file.verify_sha1():
             raise HashMismatchException("sha1", target_file.sha1, target_file.expected_sha1, target_file.posix_path)
-        elif target_file.expected_md5 and not target_file.verify_md5():
+        elif verify_hash and target_file.expected_md5 and not target_file.verify_md5():
             raise HashMismatchException("md5", target_file.md5, target_file.expected_md5, target_file.posix_path)
-        elif target_file.expected_sha512 and not target_file.verify_sha512():
+        elif verify_hash and target_file.expected_sha512 and not target_file.verify_sha512():
             raise HashMismatchException("sha512", target_file.sha512, target_file.expected_sha512,
                                         target_file.posix_path)
 
-        if any([target_file.expected_sha1, target_file.expected_md5, target_file.expected_sha256]):
+        if verify_hash and any([target_file.expected_sha1, target_file.expected_md5, target_file.expected_sha256, target_file.expected_sha512]):
             logger.debug("File hash is match as the expected hash.")
         else:
             logger.warning("Hash is not checked for file: {}".format(target_file.posix_path))
@@ -297,7 +299,7 @@ def download_file(file: FileObject, overwrite=True, progress_callback: Callable[
     return file
 
 def download_multiple_files(files: List[FileObject], download_callback: Callable[[str], None]=None,
-                            max_workers=THREADED_DOWNLOAD_MAX_WORKERS, progress_callback: Callable[str]=None) \
+                            max_workers=THREADED_DOWNLOAD_MAX_WORKERS, progress_callback: Callable[str]=None, *, verify_hash=True) \
         -> tuple[list[FileObject], list[FileObject]]:
     """
     Download multiple files
@@ -315,7 +317,7 @@ def download_multiple_files(files: List[FileObject], download_callback: Callable
 
     files_count = 0
     with ThreadPoolExecutor(max_workers=max_workers) as executor:
-        future_to_file = {executor.submit(download_file, file): file for file in files}
+        future_to_file = {executor.submit(download_file, file, verify_hash=verify_hash): file for file in files}
 
         for future in as_completed(future_to_file):
             file = future_to_file[future]

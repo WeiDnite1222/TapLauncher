@@ -3,12 +3,16 @@ Profile Manager
 
 A Minecraft profile manager that completely support official Minecraft Launcher.
 """
+import base64
 import copy
 from dataclasses import dataclass
 from pathlib import Path
+from typing import Callable
 
 from PySide6.QtCore import QObject, Signal
 from datetime import datetime, timezone
+
+from PySide6.QtGui import QIcon
 
 from core_lib.common.exception import ProfileException, ProfileLoadException, ProfileSaveException
 from core_lib.game.profile import read_profile_file, is_profiles_valid, \
@@ -17,6 +21,7 @@ from core_lib.game.profile import read_profile_file, is_profiles_valid, \
     get_current_profile_id, set_current_profile_id, remove_profile, duplicate_profile,  \
     set_last_used_time
 from core_lib.game.version_info import LATEST_VERSION_ALIASES
+from core_lib.qt.hack import is_qt_supported_image, image_to_data_url, base64_to_qicon, prepare_profile_icon
 from manager.widgets import AskForRequest
 
 DEFAuLT_PROFILE_RELATIVE_PATH = Path("launcher_profiles.json")
@@ -592,6 +597,51 @@ class ProfileManager(QObject):
             )
             return False
 
+    def update_profile_icon(self, profile_id: str, filepath: Path, format_checker: Callable[[Path], *
+        tuple[bool, str | None]]=is_qt_supported_image):
+        if not self.is_loaded:
+            success, _ = self.load()
+
+            if not success:
+                return False
+
+        if profile_id is not None and not self.contains(profile_id, show_error=True):
+            return False
+
+        if not filepath.exists() or not filepath.is_file():
+            self.widget_manager.show_error(self.app.tr_text("Image file does not exist or is not a file"))
+            return False
+
+        try:
+            result = None
+            file_format: str | None = None
+            if callable(format_checker):
+                result, file_format = format_checker(filepath)
+                if not result:
+                    self.widget_manager.show_error(self.app.tr_text("Image format is not supported."))
+                    return False
+
+            if file_format is None:
+                raise ValueError(self.app.tr_text("Image format is not supported."))
+
+            new_icon, resized = prepare_profile_icon(filepath)
+            if resized:
+                self.widget_manager.signal.show_info_message.emit(self.app.tr_text(
+                    "This image exceeds 128 x 128 pixels and will be resized to 128 x 128."
+                ))
+            request = UpdateProfileRequest(
+                icon=new_icon
+            )
+
+            if not self.update_profile(profile_id, request):
+                return False
+
+            self.profiles_changed.emit()
+            return True
+        except Exception as e:
+            self.widget_manager.signal.show_error_message.emit(self.app.tr_text(str(e)))
+            return False
+
     def update_last_used_time(
         self,
         profile_id: str,
@@ -803,3 +853,16 @@ def sort_profile_summaries(
             ordered.sort(key=lambda profile: profile.id != current_profile_id)
 
     return ordered
+
+
+def _profile_icon(value: str, icon_dir: Path) -> QIcon:
+    icon = base64_to_qicon(value)
+    if icon.isNull() and not value.startswith("data:"):
+        try:
+            if value and Path(value).is_file():
+                icon = QIcon(value)
+        except (OSError, ValueError):
+            pass
+    if icon.isNull():
+        icon = QIcon(str(Path(icon_dir, "profile_default.png")))
+    return icon

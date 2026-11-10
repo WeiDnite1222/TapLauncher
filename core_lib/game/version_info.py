@@ -517,7 +517,7 @@ def fetch_and_save_version_manifest(dest: Path, target_version: str=None, root_m
     return save_version_manifest(data, dest, sha1)
 
 def download_core_file(manifest: dict, destination: Path, is_server=False, raise_for_null_hash=True,
-                       progress_callback: Callable[[str, float], None]=None) -> FileObject:
+                       progress_callback: Callable[[str, float], None]=None, *, verify_hash=True) -> FileObject:
     """
     Download core file from version manifest.
     :param manifest:
@@ -532,7 +532,7 @@ def download_core_file(manifest: dict, destination: Path, is_server=False, raise
 
     destination.parent.mkdir(parents=True, exist_ok=True)
 
-    if sha1 is None and raise_for_null_hash:
+    if verify_hash and sha1 is None and raise_for_null_hash:
         raise VersionDataKeyNotFoundException(
             "Core file hash is missing. Enable \"raise_for_null_hash\" flag to ignore this exception.\n"
         )
@@ -541,10 +541,10 @@ def download_core_file(manifest: dict, destination: Path, is_server=False, raise
 
     file = FileObject(destination, url=url, sha1=sha1)
 
-    if file.exists and file.verify("sha1", sha1):
+    if destination.is_file() and (not verify_hash or file.verify("sha1", sha1)):
         logger.info(f"Client existed and sha1 matches.")
     elif url is not None:
-        download_file(file, progress_callback=progress_callback)
+        download_file(file, progress_callback=progress_callback, verify_hash=verify_hash)
     elif not url:
         raise VersionDataKeyNotFoundException(
             "Core file url is None. Unable to download it."
@@ -567,7 +567,7 @@ def check_core_file_exists_and_verify(manifest: dict, core_file_path: Path,
     """
     _, _, downloads, _, _, _, _ = find_useful_part_in_specific_version_manifest(manifest)
 
-    if not core_file_path.exists():
+    if not core_file_path.exists() or not core_file_path.is_file():
         logger.warning(f"Core file \"{core_file_path.as_posix()}\" does not exist.")
         return False
 

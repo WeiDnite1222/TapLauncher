@@ -33,6 +33,7 @@ from core_lib.runtime.java import find_java_installations, get_java_version
 from core_lib.runtime.mojang import download_java_runtimes, fetch_runtime_manifest, get_current_platform_runtime_key
 from manager.account import AccountManager, LaunchAccount
 from manager.profile import LaunchProfile, ProfileManager
+from manager.settings_models import GameSettings
 from manager.widgets import SelectPathRequest, AskForRequest, SignalTransferItem
 
 MAX_DOWNLOAD_ATTEMPTS = 3
@@ -883,6 +884,9 @@ class GameFileManager:
             "download_assets": self.download_assets,
         }
 
+    def _verify_download_hash(self) -> bool:
+        return self.app.settings_manager.get("game", GameSettings).verify_hash_on_download
+
     def get_manifest(self, target_version: str,
                      manifest: dict | None, failed_message: str,
                      vanilla: bool=False) -> dict | None:
@@ -925,8 +929,10 @@ class GameFileManager:
             "Downloading dependencies..."
         )
 
+        verify_hash = self._verify_download_hash()
         try:
             download_core_file(manifest, core_file_path,
+                               verify_hash=verify_hash,
                                raise_for_null_hash=True,
                                progress_callback=callback)
         except Exception as e:
@@ -953,10 +959,12 @@ class GameFileManager:
             "Downloading dependencies..."
         )
 
+        verify_hash = self._verify_download_hash()
         try:
             download_full_libraries(manifest, libraries_dir, natives_dir,
                                     progress_callback=callback,
-                                    redownload_callback=self.redownload_files)
+                                    verify_hash=verify_hash,
+                                    redownload_callback=lambda files: self.redownload_files(files, verify_hash=verify_hash))
         except Exception as e:
             self.widget_mgr.download_signal.failed.emit(task_id, str(e))
             self.widget_mgr.signal.show_error_message.emit(
@@ -988,16 +996,17 @@ class GameFileManager:
             "Downloading assets"
         )
 
+        verify_hash = self._verify_download_hash()
         try:
             fails = download_assets(
                 manifest,
                 assets_dir,
-                no_hash_check=True,
+                no_hash_check=not verify_hash,
                 progress_callback=callback,
                 launcher_root=self.app.work_dir,
             )
 
-            result, fails = self.redownload_files(fails)
+            result, fails = self.redownload_files(fails, verify_hash=verify_hash)
 
             if not result:
                 if allow_missing:
@@ -1048,7 +1057,7 @@ class GameFileManager:
 
         return thread
 
-    def redownload_files(self, files: list[FileObject]) -> tuple[bool, list[FileObject]]:
+    def redownload_files(self, files: list[FileObject], *, verify_hash=True) -> tuple[bool, list[FileObject]]:
         if not files:
             return True, []
 
@@ -1084,7 +1093,7 @@ class GameFileManager:
 
             self.widget_mgr.download_signal.log.emit(f"Attempt {retry_time}/{MAX_DOWNLOAD_ATTEMPTS}")
 
-            fails, successes = download_multiple_files(pending,
+            fails, successes = download_multiple_files(pending, verify_hash=verify_hash,
                                                        progress_callback=callback)
 
             for file in successes:
@@ -1191,11 +1200,15 @@ class GameFileManager:
                 )
 
                 update_stage("downloading the Minecraft client")
-                if not check_core_file_exists_and_verify(vanilla, client_jar):
+                verify_hash = self._verify_download_hash()
+                if not (client_jar.is_file() and (
+                    not verify_hash or check_core_file_exists_and_verify(vanilla, client_jar)
+                )):
                     # Keep client progress and its original errors in this installation task.
                     download_core_file(
                         vanilla, client_jar, raise_for_null_hash=True,
                         progress_callback=progress_callback,
+                        verify_hash=verify_hash,
                     )
 
                 update_stage("copying embedded artifacts")
@@ -1203,9 +1216,11 @@ class GameFileManager:
 
                 update_stage("downloading installer dependencies")
                 files = forge_like.collect_install_dependencies(plan, libraries_dir)
-                failures, _ = download_multiple_files(files, progress_callback=progress_callback)
+                failures, _ = download_multiple_files(
+                    files, progress_callback=progress_callback, verify_hash=verify_hash,
+                )
                 if failures:
-                    success, failures = self.redownload_files(failures)
+                    success, failures = self.redownload_files(failures, verify_hash=verify_hash)
                     if not success or failures:
                         raise LoaderInstallError("Unable to download installer dependencies.")
 
@@ -1285,6 +1300,7 @@ class LaunchManager:
         self.app = app
         self.manifest_mgr = manifest_manager
         self.widget_mgr = app.widget_manager
+        self.settings_mgr = app.settings_manager
         self.java_mgr = java_manager
         self.game_file_mgr = game_file_manager
         self.account_mgr = account_manager
@@ -1383,7 +1399,9 @@ class LaunchManager:
                     )
 
             # Libraries
-            if not check_full_libraries_exists(version_manifest, libraries_dir, natives_dir):
+            verify_hash = self.settings_mgr.get("game", GameSettings).verify_hash_on_launch
+            if not check_full_libraries_exists(version_manifest, libraries_dir,
+                                               natives_dir, verify_hash=verify_hash):
                 request = GameFileDownloadRequest(
                     "download_libraries",
                     (version_id, libraries_dir, natives_dir, version_manifest)

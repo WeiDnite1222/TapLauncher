@@ -3,15 +3,16 @@ from pathlib import Path
 from typing import Callable
 
 from PySide6.QtCore import Qt, QUrl, Signal
-from PySide6.QtGui import QDesktopServices, QIcon
+from PySide6.QtGui import QDesktopServices, QImageReader
 from PySide6.QtWidgets import (
     QFileDialog, QFormLayout, QFrame, QHBoxLayout, QLabel, QLineEdit,
     QMessageBox, QPushButton, QScrollArea, QSizePolicy, QSpinBox,
     QVBoxLayout, QWidget, QMenu, QComboBox, QTabWidget,
 )
 
+from core_lib.qt.hack import base64_to_qicon, prepare_profile_icon
 from core_lib.qt.item_button import ItemButton
-from manager.profile import ProfileDetail, ProfileManager, ProfileSummary, UpdateProfileRequest
+from manager.profile import ProfileDetail, ProfileManager, ProfileSummary, UpdateProfileRequest, _profile_icon
 from manager.game import AvailableVersion
 from pages.add_modded_version import AddModdedVersionDialog
 
@@ -41,12 +42,9 @@ class ManageProfileItem(ItemButton):
         layout.setContentsMargins(12, 8, 12, 8)
         layout.setSpacing(12)
 
-        icon_path = Path(profile.icon)
-        if not icon_path.is_file():
-            icon_path = Path(app.icon_dir, "profile_default.png")
         icon = QLabel()
         icon.setFixedSize(40, 40)
-        icon.setPixmap(QIcon(icon_path.as_posix()).pixmap(36, 36))
+        icon.setPixmap(_profile_icon(profile.icon, app.icon_dir).pixmap(36, 36))
         icon.setAlignment(Qt.AlignmentFlag.AlignCenter)
 
         texts = QVBoxLayout()
@@ -91,6 +89,7 @@ class ManageProfileItem(ItemButton):
         menu.exec(global_position)
 
 
+
 class ManageProfilePage(QWidget):
     """
     Profile manage page
@@ -109,6 +108,7 @@ class ManageProfilePage(QWidget):
         self.app = app
         self.profile_manager: ProfileManager = app.profile_manager
         self.manifest_manager = app.game_manager.manifest
+        self.widget_manager = app.widget_manager
         self.selected_profile_id: str | None = None
         self.profile_items: dict[str, ManageProfileItem] = {}
         self.version_options: list[AvailableVersion] = []
@@ -157,7 +157,26 @@ class ManageProfilePage(QWidget):
         form.setFieldGrowthPolicy(QFormLayout.FieldGrowthPolicy.ExpandingFieldsGrow)
         form.setVerticalSpacing(12)
 
+        # Icon & Name
+        self.profile_icon = QLabel()
+        self.profile_icon.setFixedSize(64, 64)
+        self.profile_icon.setAlignment(Qt.AlignmentFlag.AlignCenter)
         self.name_edit = QLineEdit()
+        self.replace_icon_btn = QPushButton(self.app.tr_text("Replace Icon"))
+        self.reset_icon_btn = QPushButton(self.app.tr_text("Reset Icon"))
+        self.reset_icon_btn.clicked.connect(self._reset_icon)
+
+        profile_head_h_layout = QHBoxLayout()
+        profile_head_v_layout = QVBoxLayout()
+
+        profile_head_v_layout.addWidget(self.name_edit)
+        icon_actions = QHBoxLayout()
+        icon_actions.addWidget(self.replace_icon_btn)
+        icon_actions.addWidget(self.reset_icon_btn)
+        profile_head_v_layout.addLayout(icon_actions)
+        profile_head_h_layout.addWidget(self.profile_icon)
+        profile_head_h_layout.addLayout(profile_head_v_layout)
+
         self.version_dropdown = QComboBox()
         self.version_dropdown.setObjectName("Dropdown")
         self.version_dropdown.setSizePolicy(
@@ -172,22 +191,22 @@ class ManageProfilePage(QWidget):
         self.type_dropdown.setObjectName("Dropdown")
         self.game_dir_edit = QLineEdit()
         self.java_args_edit = QLineEdit()
-        self.icon_edit = QLineEdit()
+        self.icon_edit = QLineEdit(self.editor)
+        self.icon_edit.hide()
         self.width_spin = self._dimension_spin()
         self.height_spin = self._dimension_spin()
 
-        form.addRow(self.app.tr_text("Profile name"), self.name_edit)
         form.addRow(self.app.tr_text("Type"), self.type_dropdown)
         form.addRow(self.app.tr_text("Version"), self.version_dropdown)
         form.addRow(self.app.tr_text("Game directory"), self.game_dir_edit)
         form.addRow(self.app.tr_text("Java arguments"), self.java_args_edit)
-        form.addRow(self.app.tr_text("Icon"), self.icon_edit)
 
         resolution = QHBoxLayout()
         resolution.addWidget(self.width_spin)
         resolution.addWidget(QLabel("×"))
         resolution.addWidget(self.height_spin)
         form.addRow(self.app.tr_text("Resolution"), resolution)
+        editor_layout.addLayout(profile_head_h_layout)
         editor_layout.addLayout(form)
 
         file_actions = QHBoxLayout()
@@ -228,6 +247,7 @@ class ManageProfilePage(QWidget):
 
         self.type_dropdown.currentIndexChanged.connect(self._filter_versions)
         self.profile_manager.profiles_changed.connect(self.refresh_profiles)
+        self.replace_icon_btn.clicked.connect(self._replace_icon)
         self.app.apply_qss(Path("manage_profile.qss"), self.setStyleSheet)
         self._load_type_dropdown()
         self.refresh_profiles()
@@ -361,6 +381,9 @@ class ManageProfilePage(QWidget):
 
     def _set_detail(self, profile: ProfileDetail) -> None:
         self.name_edit.setText(profile.name)
+        profile_icon = _profile_icon(profile.icon, self.app.icon_dir)
+        self.profile_icon.setPixmap(profile_icon.pixmap(64, 64))
+
         option = next(
             (item for item in self.version_options if item.id == profile.version_id),
             None,
@@ -611,3 +634,44 @@ class ManageProfilePage(QWidget):
             cleanup()
             raise
         return cleanup
+
+    def _reset_icon(self):
+        if self.selected_profile_id is None:
+            return
+        self.icon_edit.clear()
+        self.profile_icon.setPixmap(_profile_icon("", self.app.icon_dir).pixmap(64, 64))
+
+    def _replace_icon(self):
+        profile_id = self.selected_profile_id
+
+        if not profile_id or self.profile_manager.get_profile(profile_id) is None:
+            self.widget_manager.signal.show_warning_message.emit(
+                self.app.tr_text("Select a profile before replacing the icon")
+            )
+            return
+
+        formats = " ".join(
+            "*." + bytes(fmt).decode("ascii")
+            for fmt in QImageReader.supportedImageFormats()
+        )
+        filename, _ = QFileDialog.getOpenFileName(
+            self, self.app.tr_text("Replace Icon"), "",
+            self.app.tr_text("Images") + f" ({formats});;" + self.app.tr_text("All files") + " (*)",
+        )
+        if not filename:
+            return
+        try:
+            path = Path(filename)
+            value, resized = prepare_profile_icon(path)
+            icon = base64_to_qicon(value)
+            if icon.isNull():
+                raise ValueError(self.app.tr_text("Image format is not supported."))
+        except (OSError, ValueError) as error:
+            self.widget_manager.signal.show_error_message.emit(self.app.tr_text(str(error)))
+            return
+        if resized:
+            self.widget_manager.signal.show_info_message.emit(self.app.tr_text(
+                "This image exceeds 128 x 128 pixels and will be resized to 128 x 128."
+            ))
+        self.icon_edit.setText(value)
+        self.profile_icon.setPixmap(icon.pixmap(64, 64))
