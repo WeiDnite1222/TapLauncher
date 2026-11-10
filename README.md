@@ -6,15 +6,13 @@
     <td>
       <h1>TapLauncher</h1>
       <p>
-        A Minecraft launcher that focuses on maximum compatibility with the
-        official Minecraft Launcher and provides a better user experience for players.
+        Digging for more information...
       </p>
     </td>
   </tr>
 </table>
 
-# There's no stable branch because this project is still under development. But you can try the alpha version that
-# higher than v0.1.0a0 (stable in most time)
+# There's no stable branch because this project is still under development. But you can try the alpha version that higher than v0.1.0a0 (stable in most time)
 
 ## How to use?
 
@@ -224,8 +222,10 @@ refresh tokens, and sign-in codes before sharing logs.
 ### TODO
 
 - [X] Add support for installing Forge/Neoforge (even Quilt) mod loader.
+- [X] Add a simple plugin system, allows customizing launcher behavior such as adding a new page or button.
 - [ ] Design the home page.
 - [ ] Add more custom settings.
 - [ ] Add a usage guide.
 - [ ] Add download mod from third party website support.
-- [X] Add a simple plugin system, allows customizing launcher behavior such as adding a new page or button.
+- [ ] Design a new icon to replace the current one (looks horrible).
+
