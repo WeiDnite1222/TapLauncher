@@ -1,0 +1,7 @@
+group = "net.wei"
+id = "offline-support"
+name = "Offline Support"
+version = "1.1.0"
+api_version = ">=0.0.1"
+entrypoint = "__init__.py:setup"
+description = "Adds offline accounts after at least one Microsoft account is signed in."

@@ -96,7 +96,7 @@ class ToolBar(QtWidgets.QToolBar):
                 )
                 button.setMinimumWidth(60)
 
-    def add_button(self, button_id: str, text=None,icon: QIcon=None) -> QToolButton:
+    def add_button(self, button_id: str, text=None,icon: QIcon=None) -> PageButton:
         if not isinstance(button_id, str) or not button_id.strip():
             raise ValueError("Button id must be a non-empty string")
         if button_id in self.buttons:
@@ -319,13 +319,9 @@ class LauncherMainWindow(QMainWindow):
             self.bind_page_button(self.open_test_page, self.test_page)
 
         self.bind_page_button(self.open_launch_profile_page, self.launch_profile_page)
-
         self.bind_page_button(self.open_settings_page, self.settings_page)
-
         self.bind_page_button(self.open_account_page, self.account_page)
-
         self.bind_page_button(self.open_create_profile_page, self.create_profile_page)
-
         self.bind_page_button(self.open_manage_profile_page, self.manage_profile_page)
 
         # Apply page bar settings

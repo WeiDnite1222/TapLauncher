@@ -5,7 +5,7 @@ from typing import Callable
 from PySide6.QtCore import Qt, QUrl, Signal
 from PySide6.QtGui import QDesktopServices, QImageReader
 from PySide6.QtWidgets import (
-    QFileDialog, QFormLayout, QFrame, QHBoxLayout, QLabel, QLineEdit,
+    QFileDialog, QFormLayout, QFrame, QGridLayout, QHBoxLayout, QLabel, QLineEdit,
     QMessageBox, QPushButton, QScrollArea, QSizePolicy, QSpinBox,
     QVBoxLayout, QWidget, QMenu, QComboBox, QTabWidget,
 )
@@ -130,14 +130,14 @@ class ManageProfilePage(QWidget):
         self.list_layout.setSpacing(4)
         self.list_layout.setAlignment(Qt.AlignmentFlag.AlignTop)
         self.list_scroll.setWidget(self.list_content)
-        self.list_scroll.setMinimumWidth(260)
-        self.list_scroll.setMaximumWidth(380)
-        columns.addWidget(self.list_scroll, 2)
+        self.list_scroll.setMinimumWidth(220)
+        self.list_scroll.setMaximumWidth(320)
+        columns.addWidget(self.list_scroll, 1)
 
         self.options_scroll = self._scroll_area("manageProfileOptionsScroll")
         self.options_content = QWidget()
         self.options_layout = QVBoxLayout(self.options_content)
-        self.options_layout.setContentsMargins(20, 16, 20, 20)
+        self.options_layout.setContentsMargins(10, 16, 10, 10)
         self.options_layout.setSpacing(14)
         self.options_scroll.setWidget(self.options_content)
 
@@ -147,7 +147,7 @@ class ManageProfilePage(QWidget):
         self.empty_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
         self.empty_label.setWordWrap(True)
         self.options_layout.addWidget(self.empty_label, 1)
-        columns.addWidget(self.profile_tabs, 3)
+        columns.addWidget(self.profile_tabs, 2)
 
         self.editor = QFrame()
         self.editor.setObjectName("profileEditor")
@@ -155,6 +155,7 @@ class ManageProfilePage(QWidget):
         editor_layout.setSpacing(14)
         form = QFormLayout()
         form.setFieldGrowthPolicy(QFormLayout.FieldGrowthPolicy.ExpandingFieldsGrow)
+        form.setRowWrapPolicy(QFormLayout.RowWrapPolicy.WrapAllRows)
         form.setVerticalSpacing(12)
 
         # Icon & Name
@@ -209,17 +210,20 @@ class ManageProfilePage(QWidget):
         editor_layout.addLayout(profile_head_h_layout)
         editor_layout.addLayout(form)
 
-        file_actions = QHBoxLayout()
+        file_actions = QGridLayout()
+        file_actions.setHorizontalSpacing(10)
+        file_actions.setVerticalSpacing(8)
         add_version_button = QPushButton(self.app.tr_text("Add Modded Version"))
         add_version_button.clicked.connect(self.open_add_modded_version_dialog)
         open_button = QPushButton(self.app.tr_text("Open Profile Folder"))
         open_button.clicked.connect(self.open_profile_folder)
         import_button = QPushButton(self.app.tr_text("Import Mods…"))
         import_button.clicked.connect(self.import_mods)
-        file_actions.addWidget(add_version_button)
-        file_actions.addWidget(open_button)
-        file_actions.addWidget(import_button)
-        file_actions.addStretch()
+        file_actions.addWidget(add_version_button, 0, 0)
+        file_actions.addWidget(open_button, 0, 1)
+        file_actions.addWidget(import_button, 1, 0, 1, 2)
+        file_actions.setColumnStretch(0, 1)
+        file_actions.setColumnStretch(1, 1)
         editor_layout.addLayout(file_actions)
 
         self.plugin_actions = QHBoxLayout()

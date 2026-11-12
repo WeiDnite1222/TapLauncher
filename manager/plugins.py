@@ -12,8 +12,9 @@ from hashlib import sha256
 from importlib.machinery import ModuleSpec
 from importlib.util import spec_from_file_location
 from logging import Logger
+from optparse import Option
 from pathlib import Path
-from typing import Callable, Any
+from typing import Callable, Any, Protocol
 
 from PySide6.QtCore import QObject, Signal
 
@@ -39,6 +40,7 @@ OPERATORS = {
     "===": "same",
 }
 
+
 def describe_specifier(spec: SpecifierSet) -> str:
     if not spec:
         return "No version limit"
@@ -48,8 +50,58 @@ def describe_specifier(spec: SpecifierSet) -> str:
         for item in sorted(spec, key=str)
     )
 
+
+class WheelAccessDenied(AttributeError):
+    def __init__(self, root: str, name: str):
+        super().__init__(f"Access denied while accessing instance {name} in {root}")
+
+
+def get_attribute(obj, name):
+    attributes = vars(obj)
+
+    if name in attributes:
+        return attributes[name]
+
+    if name.startswith("__") and not name.endswith("__"):
+        for cls in type(obj).__mro__:
+            mangled = f"_{cls.__name__.lstrip('_')}{name}"
+
+            if mangled in attributes:
+                return attributes[mangled]
+
+    raise AttributeError(name)
+
+
+def find_instance_by_path(root, name: str) -> Any:
+    """
+    Find instance by path
+    Example: find_instance_by_path(A(), "b.c.d.__hidden")
+    :param root:
+    :param name:
+    :return:
+    """
+    parts = name.split(".")
+
+    if any(not part or part != part.strip() for part in parts):
+        raise ValueError("Invalid path.")
+
+    current = root
+    current_path = ""
+
+    for part in parts:
+        current_path = (
+            f"{current_path}.{part}"
+            if current_path else part
+        )
+
+        current = get_attribute(current, part)
+
+    return current
+
+
 class Plugin:
-    def __init__(self, plugin_id: str, name: str, group: str, version: str, api_version_range: SpecifierSet, entrypoint: str, path: Path,
+    def __init__(self, plugin_id: str, name: str, group: str, version: str, api_version_range: SpecifierSet,
+                 entrypoint: str, path: Path,
                  icon_path: Path | None = None, module_spec: ModuleSpec | None = None, description: str = ""):
         self.id: str = plugin_id
         self.name: str = name
@@ -83,6 +135,19 @@ class Plugin:
         """
         return self.entrypoint.rsplit(":", 1)[-1]
 
+
+@dataclass(frozen=True)
+class PluginPatch:
+    replace: Callable[..., Any]
+    set: Callable[..., Any]
+    wrap: Callable[..., Any]
+
+
+class GetInstance(Protocol):
+    def __call__(self, address: str, allow_private: bool = True) -> Any:
+        ...
+
+
 @dataclass(frozen=True)
 class PluginContext:
     api_version: str
@@ -93,15 +158,20 @@ class PluginContext:
 
     # callback
     get_api: Callable[[str], Callable]
+    get_instance: GetInstance
     show_info: Callable[[str], None]
     show_error: Callable[[str], None]
     on_cleanup: Callable[[Callable[[], None]], None]
     override_api: Callable[[str, Callable], Callable[[], None]]
 
+    patch: PluginPatch
+
+
 class PluginHook:
     """
     A callable instance that used by plugin to calling the target API.
     """
+
     def __init__(self, name: str, target: Callable[..., Any]):
         self.name = name
         self._target = target
@@ -133,6 +203,7 @@ class PluginHook:
         self._overrides = [entry for entry in self._overrides if entry[0] is not token]
         self._target = self._overrides[-1][1] if self._overrides else self._original_target
 
+
 class PluginManager(QObject):
     def __init__(self, app):
         QObject.__init__(self)
@@ -153,7 +224,7 @@ class PluginManager(QObject):
     class Signals(QObject):
         load_plugins = Signal()
         reload_plugins = Signal()
-        plugins_loaded = Signal() # For gui
+        plugins_loaded = Signal()  # For gui
         plugin_state_changed = Signal(object)
 
     def _show_error(self, message: str, error: BaseException | None = None):
@@ -342,11 +413,15 @@ class PluginManager(QObject):
 
     def _create_plugin_context(self, plugin: Plugin) -> PluginContext:
         plugin_id = f"{plugin.group}:{plugin.id}"
+
         data_root = (self.app.data_dir / "plugins").resolve()
         data_dir = (data_root / plugin.group / plugin.id).resolve()
+
         if data_dir == data_root or not data_dir.is_relative_to(data_root):
             raise ValueError(f"Invalid plugin data directory: {plugin_id}")
+
         data_dir.mkdir(parents=True, exist_ok=True)
+
         return PluginContext(
             plugin_id=plugin_id,
             plugin_dir=plugin.path,
@@ -357,7 +432,18 @@ class PluginManager(QObject):
             show_error=lambda message: self._show_error(f"[{plugin_id}] {message}"),
             on_cleanup=lambda callback: self._register_plugin_cleanup(plugin, callback),
             get_api=self.get_api,
+            get_instance=self.get_instance,
             override_api=lambda name, callback: self._override_plugin_api(plugin, name, callback),
+            patch=PluginPatch(
+                set=lambda address, name, value: self._patch_set(
+                    plugin, address, name, value
+                ),
+                replace=lambda address, name, replacement: self._patch_replace(
+                    plugin, address, name, replacement
+                ),
+                wrap=lambda address, name, wrapper: self._patch_wrap(
+                    plugin, address, name, wrapper
+                ))
         )
 
     def _override_plugin_api(self, plugin: Plugin, name: str, callback: Callable) -> Callable[[], None]:
@@ -425,7 +511,8 @@ class PluginManager(QObject):
                 if not required_api_version:
                     raise ValueError("Required API version is missing.")
 
-                is_valid, is_support, support_api_ver_range = self._check_plugin_support_api_version(required_api_version)
+                is_valid, is_support, support_api_ver_range = self._check_plugin_support_api_version(
+                    required_api_version)
                 if not is_valid or support_api_ver_range is None:
                     raise ValueError("Plugin support api version range is invalid")
                 elif not is_support:
@@ -606,3 +693,142 @@ class PluginManager(QObject):
             return self._apis[name]
         except KeyError:
             raise LookupError(f'Plugin API "{name}" is not available.') from None
+
+    def get_instance(self, address: str, allow_private: bool = True):
+        """
+        Get the instance object by its instance address.
+        :param address:
+        :param allow_private:
+        :return:
+        """
+        for name in address.split("."):
+            if name != name.strip() or (name.startswith("__") and not allow_private):
+                raise ValueError("Invalid or protected attribute name.")
+
+        target = find_instance_by_path(self.app, address)
+
+        try:
+            hidden = get_attribute(target, "__wheel_hidden")
+        except AttributeError:
+            hidden = []
+
+        address_name, _, instance_name = address.rpartition(".")
+        if instance_name in hidden or address in hidden:
+            raise WheelAccessDenied(address_name or "app", instance_name)
+
+        return target
+
+    def _locate_patch_target(self, instance_address: str, name: str, allow_private: bool = True):
+        """
+        Locate the target object by its instance address and attribute name.
+        :param instance_address:
+        :param name:
+        :param allow_private:
+        :return:
+        """
+        # Check instance address and private state
+        if not isinstance(name, str) or not name or "." in name:
+            raise ValueError("Attribute name must be a non-empty simple name.")
+
+        if name != name.strip() or (name.startswith("__") and not allow_private):
+            raise ValueError("Invalid or protected attribute name.")
+
+        target = find_instance_by_path(self.app, instance_address)
+
+        try:
+            hidden = get_attribute(target, "__wheel_hidden")
+        except AttributeError:
+            hidden = []
+
+        full_path = f"{instance_address}.{name}"
+        if name in hidden or full_path in hidden:
+            raise WheelAccessDenied(instance_address, name)
+
+        return target
+
+    def _apply_patch(self, plugin: Plugin, target, name: str, value):
+        attributes = vars(target)
+        had_local_value = name in attributes
+        original_value = attributes.get(name)
+
+        setattr(target, name, value)
+        restored = False
+
+        def restore():
+            nonlocal restored
+
+            if restored:
+                return
+
+            if had_local_value:
+                setattr(target, name, original_value)
+            else:
+                delattr(target, name)
+
+            restored = True
+
+        self._register_plugin_cleanup(plugin, restore)  # ensure all processes can be restored after plugin disabled
+        return restore
+
+    def _patch_set(self, plugin: Plugin, address: str, name: str, value):
+        """
+        Set the target instance attribute to the provided value.
+        :param plugin:
+        :param address:
+        :param name:
+        :param value:
+        :return:
+        """
+        target = self._locate_patch_target(address, name)
+        return self._apply_patch(plugin, target, name, value)
+
+    def _patch_replace(self, plugin: Plugin, address: str, name: str, replacement):
+        """
+        Replace the target method with the provided replacement.
+        :param plugin:
+        :param address:
+        :param name:
+        :param replacement:
+        :return:
+        """
+        if not callable(replacement):
+            raise TypeError("Replacement must be callable.")
+
+        target = self._locate_patch_target(address, name)
+
+        if not callable(getattr(target, name)):
+            raise TypeError("Target attribute must be callable.")
+
+        return self._apply_patch(plugin, target, name, replacement)
+
+    def _patch_wrap(self, plugin: Plugin, address: str, name: str, wrapper):
+        """
+        Wrap a method with the provided wrapper.
+        :param plugin:
+        :param address:
+        :param name:
+        :param wrapper:
+        :return:
+        Examples:
+        A method is at root.example_manager.spam
+        it looks like this: def span(self, *args, **kwargs): return ["spam"]
+
+        Define the wrapper function.
+        def (original, *args, **kwargs): return original(*args, **kwargs).append("eggs")
+
+        Wrapping it with context.patch.wrap("example_manager", "spam", wrapper) # associated instance address
+        # method name, wrapper function
+        """
+        if not callable(wrapper):
+            raise TypeError("Wrapper must be callable.")
+
+        target = self._locate_patch_target(address, name)
+        original = getattr(target, name)
+
+        if not callable(original):
+            raise TypeError("Target attribute is not callable.")
+
+        def wrapped(*args, **kwargs):
+            return wrapper(original, *args, **kwargs)
+
+        return self._apply_patch(plugin, target, name, wrapped)

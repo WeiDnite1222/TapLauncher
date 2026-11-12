@@ -185,8 +185,8 @@ class AccountPage(QWidget):
         self.login_dialog = None
 
         # Layout
-        main_layout = QVBoxLayout()
-        right_layout = QVBoxLayout()
+        self.main_layout = QVBoxLayout()
+        self.right_layout = QVBoxLayout()
         layout = QHBoxLayout(self)
 
         # Widgets
@@ -208,16 +208,16 @@ class AccountPage(QWidget):
         self.avatar_size = QSize(32, 32)
 
         # Bind widget
-        main_layout.addWidget(self.account_list)
-        right_layout.addWidget(self.add_account_button)
-        right_layout.addWidget(self.refresh_button)
-        right_layout.addWidget(self.reload_button)
-        right_layout.addWidget(self.delete_all_button)
-        right_layout.addWidget(self.refresh_avatar_cache_button)
-        right_layout.addStretch()
+        self.main_layout.addWidget(self.account_list)
+        self.right_layout.addWidget(self.add_account_button)
+        self.right_layout.addWidget(self.refresh_button)
+        self.right_layout.addWidget(self.reload_button)
+        self.right_layout.addWidget(self.delete_all_button)
+        self.right_layout.addWidget(self.refresh_avatar_cache_button)
+        self.right_layout.addStretch()
 
-        layout.addLayout(main_layout, 1)
-        layout.addLayout(right_layout)
+        layout.addLayout(self.main_layout, 1)
+        layout.addLayout(self.right_layout)
 
         self.related_button : QToolButton = None
 
@@ -375,6 +375,7 @@ class AccountPage(QWidget):
     def _switch_account(self, account_id: str):
         self.account_manager.set_current_account(account_id)
         self.account_manager.save()
+        self._account_head_updated(account_id)
 
     def _current_account_changed(self, _account_id):
         self._render_accounts()
