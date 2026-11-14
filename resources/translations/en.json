@@ -453,5 +453,6 @@
   "Correct the settings file and restart the launcher to try again.": "Correct the settings file and restart the launcher to try again.",
   "Raw details (Python traceback)": "Raw details (Python traceback)",
   "Reset Icon": "Reset Icon",
-  "This image exceeds 128 x 128 pixels and will be resized to 128 x 128.": "This image exceeds 128 x 128 pixels and will be resized to 128 x 128."
+  "This image exceeds 128 x 128 pixels and will be resized to 128 x 128.": "This image exceeds 128 x 128 pixels and will be resized to 128 x 128.",
+  "Compatibility mode changed. Please restart the launcher to apply the changes.": "Compatibility mode changed. Please restart the launcher to apply the changes."
 }

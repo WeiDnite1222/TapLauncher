@@ -455,5 +455,6 @@
   "Settings could not be loaded. Default settings are now in use.\nThe original settings file will not be overwritten.\nSettings changes made during this session will not be saved.": "設定無法載入，目前使用預設值。\n原始設定檔不會被覆寫。\n本次執行期間的設定變更不會儲存。",
   "Settings file: {path}": "設定檔：{path}",
   "Correct the settings file and restart the launcher to try again.": "請修正設定檔，再重新啟動啟動器。",
-  "Raw details (Python traceback)": "原始資訊（Python traceback）"
+  "Raw details (Python traceback)": "原始資訊（Python traceback）",
+  "Compatibility mode changed. Please restart the launcher to apply the changes.": "兼容性模式已變更，請重新啟動啟動器來套用變更。"
 }
