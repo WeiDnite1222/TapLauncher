@@ -29,6 +29,8 @@ class SettingsManager:
         self.path = Path(path) if path is not None else None
         self._models: dict[str, type[BaseModel]] = {}
         self._settings: dict[str, BaseModel] = {}
+        self._prevent_save: bool = False # This flag prevents the settings from being saved to disk. Used
+        # when errors occur during loading the settings.
 
     @property
     def registered_sections(self) -> tuple[str, ...]:
@@ -143,23 +145,33 @@ class SettingsManager:
         self._settings[section] = validated
         return validated
 
-    def load_defaults(self) -> SettingsManager:
+    def load_defaults(self, prevent_save: bool=False) -> SettingsManager:
         """Load every registered model using its declared default values."""
         loaded: dict[str, BaseModel] = {}
         errors: dict[str, ValidationError] = {}
+
         for section, model in self._models.items():
             try:
                 loaded[section] = model.model_validate({})
             except ValidationError as error:
                 errors[section] = error
+
         if errors:
             raise ConfigValidationError(errors)
+
+        if prevent_save:
+            self._prevent_save = True
+
         self._settings = loaded
         return self
 
     def save(self, path: str | Path | None = None) -> Path:
         """Validate all loaded sections and save them as UTF-8 TOML."""
         config_path = self._resolve_path(path)
+
+        if self._prevent_save:
+            return config_path
+
         missing = set(self._models).difference(self._settings)
         if missing:
             names = ", ".join(sorted(missing))

@@ -523,10 +523,12 @@ class ManageProfilePage(QWidget):
         )
 
     def duplicate_profile(self, profile: ProfileSummary | None=None) -> None:
-        if self.selected_profile_id is None and profile is None:
-            return
-
         profile_id = self.selected_profile_id
+        if isinstance(profile, ProfileSummary):
+            profile_id = profile.id
+
+        if profile_id is None:
+            return
 
         new_id = self.profile_manager.duplicate_profile(profile_id)
 
@@ -535,10 +537,12 @@ class ManageProfilePage(QWidget):
             self.load_profiles()
 
     def delete_profile(self, profile: ProfileSummary | None=None) -> None:
-        if self.selected_profile_id is None and profile is None:
-            return
-
         profile_id = self.selected_profile_id
+        if isinstance(profile, ProfileSummary):
+            profile_id = profile.id
+
+        if profile_id is None:
+            return
 
         answer = QMessageBox.question(
             self,
@@ -548,8 +552,7 @@ class ManageProfilePage(QWidget):
             QMessageBox.StandardButton.No,
         )
         if answer == QMessageBox.StandardButton.Yes:
-            if self.profile_manager.remove_profile(profile_id):
-                self.selected_profile_id = None
+            self.profile_manager.remove_profile(profile_id)
 
     def add_page(self, page_name: str, page: QScrollArea) -> Callable[[], None]:
         """Add a plugin tab and return an idempotent cleanup callback."""

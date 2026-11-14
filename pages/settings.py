@@ -19,16 +19,31 @@ from PySide6.QtWidgets import (
 from constant import LAUNCHER_NAME, LAUNCHER_VERSION, LAUNCHER_DESCRIPTION_KEYWORD, \
     LAUNCHER_DESCRIPTION_MARKDOWN, LAUNCHER_DESCRIPTION_MARKDOWN_KEYWORD
 from core_lib.qt import messagebox
-from manager.settings_models import AccountSettings, AppearanceSettings, GeneralSettings, GameSettings
+from manager.settings_models import AccountSettings, AppearanceSettings, GeneralSettings, GameSettings, PageBarSettings
 from pages.plugins import PluginsDialog
 
 LANGUAGE_LABELS = {
     "en": "English",
     "zh-TW": "Chinese (Traditional)",
 }
+POSITION_LABELS = {
+    "left": "Left",
+    "right": "Right",
+    "top": "Top",
+    "bottom": "Bottom",
+}
 CREDENTIALS_SAVE_METHODS = {
     "system-keyring": "Use system keyring",
     "file": "Save as a regular file",
+}
+COMPATIBILITY_MODE_LABELS = {
+    "none": "Disabled",
+    "official-launcher": "Minecraft Launcher",
+}
+LAUNCH_ACTION_LABELS = {
+    "close": "Close launcher window",
+    "stay-open": "Keep launcher open",
+    "minimize": "Minimize launcher window",
 }
 
 
@@ -79,7 +94,6 @@ class SettingsSubPage(QWidget):
         header_layout.addStretch()
 
         self.content_layout = QVBoxLayout()
-        self.content_layout.setSpacing(12)
         main_layout.addLayout(header_layout)
         self.content_layout.setContentsMargins(0, 0, 0, 0)
         self.content_layout.setSpacing(6)
@@ -88,6 +102,17 @@ class SettingsSubPage(QWidget):
         else:
             main_layout.addLayout(self.content_layout)
         main_layout.addStretch()
+
+    def add_section_title(self, title: str) -> None:
+        if self.content_layout.count():
+            self.content_layout.addSpacing(16)
+        label = QLabel(title)
+        label.setObjectName("settingsSectionTitle")
+        font = label.font()
+        font.setPointSize(12)
+        font.setBold(True)
+        label.setFont(font)
+        self.content_layout.addWidget(label)
 
 
 class SettingsPage(QWidget):
@@ -194,7 +219,7 @@ class SettingsPage(QWidget):
 
         pages = (
             (tr("General"), tr("Language and launcher directories"), "general_page"),
-            (tr("Game"), tr("Game file hash verification"), "game_page"),
+            (tr("Game"), tr("Game downloading and launching configuration"), "game_page"),
             (tr("Appearance"), tr("Launcher theme"), "appearance_page"),
             (tr("Account"), tr("Microsoft authentication settings"), "account_page"),
             (tr("About"), tr("Version and project information"), "about_page"),
@@ -226,7 +251,9 @@ class SettingsPage(QWidget):
         tr = self.app.tr_text
         page = SettingsSubPage(tr("General"), self._go_back)
         current = self.settings.get("general", GeneralSettings)
+        pagebar_setting = self.settings.get("page-bar", PageBarSettings)
 
+        page.add_section_title(tr("Environment Information"))
         page.content_layout.addWidget(QLabel(tr("Current launcher working directory")))
         launcher_dir = QLineEdit(self.app.work_dir.as_posix())
         launcher_dir.setReadOnly(True)
@@ -237,25 +264,75 @@ class SettingsPage(QWidget):
         program_dir.setReadOnly(True)
         page.content_layout.addWidget(program_dir)
 
-        page.content_layout.addSpacing(8)
-        page.content_layout.addWidget(QLabel(tr("Language")))
+        page.content_layout.addWidget(QLabel(tr("Current game directory")))
+        program_dir = QLineEdit(self.app.game_dir.as_posix())
+        program_dir.setReadOnly(True)
+        page.content_layout.addWidget(program_dir)
+
+        page.add_section_title(tr("Language"))
         self.language_combo = self._choice_combo(
             "general", "language", LANGUAGE_LABELS, current.language
         )
         page.content_layout.addWidget(self.language_combo)
+        page.add_section_title(tr("PageBar"))
+        self.reset_to_last_used_page = QCheckBox(tr("Reset to last used page"))
+        self.reset_to_last_used_page.setChecked(pagebar_setting.focus_at_after_restart)
+        self.reset_to_last_used_page.toggled.connect(
+            self._mark_settings_dirty
+        )
+        page.content_layout.addWidget(self.reset_to_last_used_page)
+
+        page.content_layout.addSpacing(2)
+        page.content_layout.addWidget(QLabel(tr("Position")))
+        self.pagebar_position_combo = self._choice_combo(
+            "page-bar", "page_bar_position", POSITION_LABELS, pagebar_setting.page_bar_position
+        )
+        self.pagebar_position_combo.currentIndexChanged.connect(
+            self._mark_settings_dirty
+        )
+        page.content_layout.addWidget(self.pagebar_position_combo)
+
+        page.content_layout.addSpacing(2)
+        page.add_section_title(tr("Compatibility Mode"))
+        self.compatibility_mode_combo = self._choice_combo(
+            "general", "compatibility_mode", COMPATIBILITY_MODE_LABELS, current.compatibility_mode
+        )
+        self.compatibility_mode_combo.currentIndexChanged.connect(
+            self._mark_settings_dirty
+        )
+        page.content_layout.addWidget(self.compatibility_mode_combo)
+        page.content_layout.addSpacing(2)
         return page
 
     def _create_game_page(self) -> QWidget:
         tr = self.app.tr_text
         page = SettingsSubPage(tr("Game"), self._go_back)
         current = self.settings.get("game", GameSettings)
+
+        page.add_section_title(tr("Download"))
         self.verify_hash_on_download = QCheckBox(tr("Verify file hashes when downloading"))
         self.verify_hash_on_download.setChecked(current.verify_hash_on_download)
+        self.verify_hash_on_download.toggled.connect(self._mark_settings_dirty)
+        page.content_layout.addWidget(self.verify_hash_on_download)
+
+        page.add_section_title(tr("Game Launching"))
         self.verify_hash_on_launch = QCheckBox(tr("Verify library hashes before launch"))
         self.verify_hash_on_launch.setChecked(current.verify_hash_on_launch)
-        for checkbox in (self.verify_hash_on_download, self.verify_hash_on_launch):
-            checkbox.toggled.connect(self._mark_settings_dirty)
-            page.content_layout.addWidget(checkbox)
+        self.verify_hash_on_launch.toggled.connect(self._mark_settings_dirty)
+        page.content_layout.addWidget(self.verify_hash_on_launch)
+
+        self.open_log_view_when_launch = QCheckBox(tr("Open game log when launching"))
+        self.open_log_view_when_launch.setChecked(current.open_log_view_when_launch)
+        self.open_log_view_when_launch.toggled.connect(self._mark_settings_dirty)
+        page.content_layout.addWidget(self.open_log_view_when_launch)
+
+        page.content_layout.addWidget(QLabel(tr("After game launch")))
+        self.action_after_launch = self._choice_combo(
+            "game", "action_after_launch", LAUNCH_ACTION_LABELS, current.action_after_launch
+        )
+        self.action_after_launch.currentIndexChanged.connect(self._mark_settings_dirty)
+        page.content_layout.addWidget(self.action_after_launch)
+
         return page
 
     def _create_appearance_page(self) -> QWidget:
@@ -263,7 +340,8 @@ class SettingsPage(QWidget):
         page = SettingsSubPage(tr("Appearance"), self._go_back)
         current = self.settings.get("appearance", AppearanceSettings)
 
-        page.content_layout.addWidget(QLabel(tr("Theme")))
+        # Theme
+        page.add_section_title(tr("Theme"))
         self.theme_combo = QComboBox()
         for theme_id, name in self.app.available_themes().items():
             self.theme_combo.addItem(tr(name), theme_id)
@@ -279,7 +357,9 @@ class SettingsPage(QWidget):
         help_label.setObjectName("settingsHelpText")
         help_label.setWordWrap(True)
         page.content_layout.addWidget(help_label)
-        page.content_layout.addWidget(QLabel(tr("Launch page background")))
+
+        # Launch game page background
+        page.add_section_title(tr("Launch page background"))
         self.launch_background = current.launch_background
         self.background_preview = QLabel()
         self.background_preview.setFixedSize(320, 180)
@@ -345,6 +425,24 @@ class SettingsPage(QWidget):
         page = SettingsSubPage(tr("Account"), self._go_back)
         current = self.settings.get("account", AccountSettings)
 
+        # TokeUpdater
+        page.add_section_title(tr("TokenUpdater"))
+
+        self.enable_token_updater_checkbox = QCheckBox(tr("Enable token updater"))
+        page.content_layout.addWidget(self.enable_token_updater_checkbox)
+        page.content_layout.addWidget(QLabel(tr("Token refresh check interval")))
+        self.token_refresh_interval = QSpinBox()
+        self.token_refresh_interval.setRange(1, 1440)  # minutes
+        self.token_refresh_interval.setSingleStep(1)
+        self.token_refresh_interval.setSuffix(
+            " " + tr("minutes")
+        )
+        self.token_refresh_interval.setValue(current.token_refresh_interval // 60)
+        self.token_refresh_interval.valueChanged.connect(self._mark_settings_dirty)
+        page.content_layout.addWidget(self.token_refresh_interval)
+
+        page.add_section_title(tr("Custom"))
+
         page.content_layout.addWidget(QLabel(tr("Credentials save method")))
         self.credentials_save_method = self._choice_combo(
             "account", "credentials_save_method", CREDENTIALS_SAVE_METHODS,
@@ -372,22 +470,6 @@ class SettingsPage(QWidget):
         ))
         help_label.setObjectName("settingsHelpText")
         help_label.setWordWrap(True)
-
-        page.content_layout.addWidget(
-            QLabel(tr("Token refresh check interval"))
-        )
-
-        self.token_refresh_interval = QSpinBox()
-        self.token_refresh_interval.setRange(1, 1440) # minutes
-        self.token_refresh_interval.setSingleStep(1)
-        self.token_refresh_interval.setSuffix(
-            " " + tr("minutes")
-        )
-        self.token_refresh_interval.setValue(current.token_refresh_interval // 60)
-
-        self.token_refresh_interval.valueChanged.connect(self._mark_settings_dirty)
-
-        page.content_layout.addWidget(self.token_refresh_interval)
         page.content_layout.addWidget(help_label)
         return page
 
@@ -455,7 +537,7 @@ class SettingsPage(QWidget):
         previous_credentials_method = (
             self.settings
             .get("account", AccountSettings)
-            .credentials_save_method # sec
+            .credentials_save_method  # sec
         )
 
         previous_token_refresh_interval = (
@@ -463,13 +545,26 @@ class SettingsPage(QWidget):
             .token_refresh_interval
         )
 
+        previous_page_bar_position = (
+            self.settings.get("page-bar", PageBarSettings)
+            .page_bar_position
+        )
+
+        previous_compatibility_mode = (
+            self.settings.get("general", GeneralSettings)
+            .compatibility_mode
+        )
+
         current_token_refresh_interval = (
-                self.token_refresh_interval.value() * 60 # minutes to seconds
+                self.token_refresh_interval.value() * 60  # minutes to seconds
         )
 
         selected_credentials_method = (
             self.credentials_save_method.currentData()
         )
+
+        current_page_bar_position = self.pagebar_position_combo.currentData()
+        current_compatibility_mode = self.compatibility_mode_combo.currentData()
 
         credentials_method_changed = (
                 previous_credentials_method
@@ -477,8 +572,18 @@ class SettingsPage(QWidget):
         )
 
         token_refresh_interval_changed = (
-            previous_token_refresh_interval
-            != current_token_refresh_interval
+                previous_token_refresh_interval
+                != current_token_refresh_interval
+        )
+
+        previous_page_bar_position_changed = (
+                previous_page_bar_position
+                != current_page_bar_position
+        )
+
+        compatibility_mode_changed = (
+                previous_compatibility_mode
+                != current_compatibility_mode
         )
 
         client_id = self.client_id_edit.text().strip()
@@ -502,9 +607,16 @@ class SettingsPage(QWidget):
 
         old_theme = self.settings.get("appearance", AppearanceSettings).theme
         data = {
-            "general": {"language": self.language_combo.currentData()},
+            "general": {"language": self.language_combo.currentData(),
+                        "compatibility_mode": current_compatibility_mode},
+            "page-bar": {
+                "page_bar_position": current_page_bar_position,
+                "focus_at_after_restart": self.reset_to_last_used_page.isChecked()
+            },
             "game": {"verify_hash_on_download": self.verify_hash_on_download.isChecked(),
-                     "verify_hash_on_launch": self.verify_hash_on_launch.isChecked()},
+                     "verify_hash_on_launch": self.verify_hash_on_launch.isChecked(),
+                     "open_log_view_when_launch": self.open_log_view_when_launch.isChecked(),
+                     "action_after_launch": self.action_after_launch.currentData()},
             "appearance": {"theme": self.theme_combo.currentData(),
                            "launch_background": self.launch_background},
             "account": {"custom_client_id": client_id if client_id else None,
@@ -557,10 +669,25 @@ class SettingsPage(QWidget):
                 QMessageBox.critical(self, self.app.tr_text("Settings error"), str(error))
             return False
 
-        if old_theme !=self.settings.get("appearance", AppearanceSettings).theme:
+        if old_theme != self.settings.get("appearance", AppearanceSettings).theme:
             messagebox.info(None, "Launcher",
                             self.app.tr_text("To make all page apply new theme."
-                                         " Is recommend to restart the launcher after change it."))
+                                             " Is recommend to restart the launcher after change it."))
+
+        if previous_page_bar_position_changed:
+            main_window = getattr(self.app, "main_window")
+
+            if main_window:
+                main_window.apply_page_bar_settings()
+
+        if compatibility_mode_changed:
+            messagebox.info(
+                None,
+                "Launcher",
+                self.app.tr_text(
+                    "Compatibility mode changed. Please restart the launcher to apply the changes."
+                )
+            )
 
         self._settings_dirty = False
         selected_language = data["general"]["language"]

@@ -311,7 +311,7 @@ def download_assets_and_copy(assets: list[FileObject], legacy_assets: list[dict]
             return fails
 
     # Use thread pool to handle copy file process
-    with ThreadPoolExecutor(max_workers=ASSET_DOWNLOAD_MAX_WORKERS, verify_hash=not no_hash_check) as executor:
+    with ThreadPoolExecutor(max_workers=ASSET_DOWNLOAD_MAX_WORKERS) as executor:
         futures = [
             executor.submit(
                 __worker,

@@ -224,7 +224,7 @@ refresh tokens, and sign-in codes before sharing logs.
 - [X] Add support for installing Forge/Neoforge (even Quilt) mod loader.
 - [X] Add a simple plugin system, allows customizing launcher behavior such as adding a new page or button.
 - [ ] Design the home page.
-- [ ] Add more custom settings.
+- [X] Add more custom settings.
 - [ ] Add a usage guide.
 - [ ] Add download mod from third party website support.
 - [ ] Design a new icon to replace the current one (looks horrible).

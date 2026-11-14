@@ -38,7 +38,7 @@ class _ProcessSignals(QObject):
     output = Signal(str, object)
     # Windows may return an unsigned 32-bit exit code (for example
     # 0xFFFFFFFF), which does not fit in Qt's signed Signal(int).
-    finished = Signal(object)
+    finished = Signal(object, bool)
     read_failed = Signal(str)
 
 
@@ -51,13 +51,14 @@ class ProcessLogWindow(QMainWindow):
     LOG_TRIM_LINES = 10_000
 
     def __init__(self, app, process: subprocess.Popen, profile_id: str, title: str = "Game Log",
-                 parent: QWidget | None = None, finished_callback: Callable[[str, int], None]=None) -> None:
+                 parent: QWidget | None = None, finished_callback: Callable[[str, int], None] | None = None) -> None:
         super().__init__(parent)
         self.app = app
         self.process = process
         self.profile_id = profile_id
         self._signals = _ProcessSignals(self)
         self._last_error_message: str | None = None
+        self._killed_by_user = False
         self.lines: list[tuple[str, str]] = []  # type, message
         self._trimmed_line_count = 0
         self._stderr_lines: deque[str] = deque(maxlen=500)
@@ -240,7 +241,7 @@ class ProcessLogWindow(QMainWindow):
         exit_code = self._normalize_exit_code(self.process.wait())
         self._stdout_reader.join()
         self._stderr_reader.join()
-        self._signals.finished.emit(exit_code)
+        self._signals.finished.emit(exit_code, self._killed_by_user)
 
     @staticmethod
     def _normalize_exit_code(exit_code: int) -> int:
@@ -251,17 +252,17 @@ class ProcessLogWindow(QMainWindow):
 
     def kill_process(self) -> None:
         if self.process.poll() is not None:
-            self._process_finished(
-                self._normalize_exit_code(self.process.returncode or 0)
-            )
+            # The waiter reports completion after both output streams are drained.
             return
 
         self.kill_button.setEnabled(False)
         self.status_label.setText(self.app.tr_text("Killing process..."))
 
         try:
+            self._killed_by_user = True
             self.process.kill()
         except Exception as exc:
+            self._killed_by_user = False
             self.kill_button.setEnabled(True)
             self.status_label.setText(self.app.tr_text("Unable to kill process"))
             self.append_message(f"[launcher] Unable to kill process: {exc}")
@@ -303,7 +304,8 @@ class ProcessLogWindow(QMainWindow):
                 self.app.tr_text("Unable to save log file: {error}", error=exc),
             )
 
-    def _process_finished(self, exit_code: int) -> None:
+    @Slot(object, bool)
+    def _process_finished(self, exit_code: int, killed_by_user: bool = False) -> None:
         self.kill_button.setEnabled(False)
         self.status_label.setText(self.app.tr_text(
             "Process exited with code {exit_code}", exit_code=exit_code
@@ -311,11 +313,16 @@ class ProcessLogWindow(QMainWindow):
         self.append_message(f"[launcher] Process exited with code {exit_code}.")
 
         if exit_code != 0 and self._last_error_message:
-            self.append_message(
-                f"[launcher] Last error: {self._last_error_message}"
-            )
+            if not killed_by_user:
+                self.append_message(
+                    f"[launcher] Last error: {self._last_error_message}"
+                )
+            else:
+                self.append_message(
+                    "[launcher] " + self.app.tr_text("Process interrupted by user")
+                )
 
-        if exit_code != 0:
+        if exit_code != 0 and not killed_by_user:
             error_content = "\n".join(self._stderr_lines)
             if not error_content:
                 error_content = (
@@ -337,10 +344,6 @@ class ProcessLogWindow(QMainWindow):
 
     def _read_failed(self, message: str) -> None:
         self.append_message(f"[launcher] Unable to read process output: {message}")
-        if self.process.poll() is not None:
-            self._process_finished(
-                self._normalize_exit_code(self.process.returncode or 0)
-            )
 
     def closeEvent(self, event: QCloseEvent) -> None:
         # Closing the log window must not stop the game. The process remains

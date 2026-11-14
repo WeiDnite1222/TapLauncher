@@ -23,8 +23,7 @@ QPushButton#profileItem:hover {
     background: qlineargradient(x1:0,y1:0,x2:0,y2:1,stop:0 #5286d4,stop:1 #316ac5);
 }
 QPushButton#profileItem QLabel[itemHovered="true"] { color: #ffffff; background: transparent; }
-QPushButton#launchButton {
-    min-width: 150px;
+QPushButton#launchButton, QPushButton#logButton {
     font-size: 15px;
     font-weight: bold;
     color: #ffffff;
@@ -33,9 +32,9 @@ QPushButton#launchButton {
     background: qlineargradient(x1:0,y1:0,x2:0,y2:1,
         stop:0 #93d875,stop:0.15 #55ad39,stop:0.8 #31851e,stop:1 #246514);
 }
-QPushButton#launchButton:hover { border-color: #e59700; background: #4b9f2c; }
-QPushButton#launchButton:pressed { background: #28691b; }
-QPushButton#launchButton:disabled { color: #d9e3d5; background: #7b9472; }
+QPushButton#launchButton:hover, QPushButton#logButton:hover { border-color: #e59700; background: #4b9f2c; }
+QPushButton#launchButton:pressed, QPushButton#logButton:pressed { background: #28691b; }
+QPushButton#launchButton:disabled, QPushButton#logButton:disabled { color: #d9e3d5; background: #7b9472; }
 QFrame#profileFrame { background: #dceaff; border: 1px solid #8fa8c9; border-radius: 3px; }
 QFrame#header {
     background: qlineargradient(x1:0,y1:0,x2:0,y2:1,stop:0 #5794f5,stop:0.18 #2879ed,stop:1 #0053cf);
@@ -43,3 +42,6 @@ QFrame#header {
     border-radius: 5px;
 }
 QLabel#headerLabel { color: #ffffff; background: transparent; font-size: 20px; font-weight: bold; }
+
+QPushButton#launchButton { min-width: 150px; }
+QPushButton#logButton { min-width: 0; padding-left: 0; padding-right: 0; }

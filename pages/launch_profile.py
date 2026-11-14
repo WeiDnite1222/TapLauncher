@@ -10,7 +10,7 @@ from manager.game import LaunchManager, LaunchResult
 from core_lib.game.version_info import LATEST_VERSION_ALIASES
 from manager.profile import ProfileSummary, LaunchProfile, ProfileManager, _profile_icon
 from manager.widgets import AskForRequest, WidgetManager
-from manager.settings_models import AppearanceSettings
+from manager.settings_models import AppearanceSettings, GameSettings
 from pages.process_log import ProcessLogWindow
 
 
@@ -197,7 +197,7 @@ class LaunchProfilePage(QWidget):
         self.status_label.setObjectName("launchStatus")
         self.status_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
 
-        # Profile button (just like the official launcher look like)
+        # Profile button (just like the official launcher looks like)
         self.profile_button = ProfileButton(self.app)
         self.profile_button.setMinimumWidth(260)
         self.profile_button.setMaximumWidth(360)
@@ -216,6 +216,20 @@ class LaunchProfilePage(QWidget):
             QSizePolicy.Policy.Expanding,
         )
         launch_button.clicked.connect(self.launch_profile)
+
+        self.log_button = QPushButton("≡", self)
+        self.log_button.setObjectName("logButton")
+        self.log_button.setFocusPolicy(Qt.FocusPolicy.TabFocus)
+        self.log_button.setToolTip(self.app.tr_text("Show game log"))
+        self.log_button.setFixedWidth(36)
+        self.log_button.setMinimumHeight(42)
+        self.log_button.setMaximumHeight(64)
+        self.log_button.setSizePolicy(
+            QSizePolicy.Policy.Fixed,
+            QSizePolicy.Policy.Expanding,
+        )
+        self.log_button.clicked.connect(self.show_selected_profile_log)
+        self.log_button.hide()
 
         # Profile overlay
         self.profile_frame = self.ProfileBackgroundFrame(
@@ -260,7 +274,13 @@ class LaunchProfilePage(QWidget):
         self.bottom_layout.addStretch()
         self.bottom_layout.addWidget(self.status_label)
         self.bottom_layout.addStretch()
-        self.bottom_layout.addWidget(launch_button)
+        launch_actions = QHBoxLayout()
+        launch_actions.setContentsMargins(0, 0, 0, 0)
+        launch_actions.setSpacing(4)
+        launch_actions.setAlignment(Qt.AlignmentFlag.AlignRight)
+        launch_actions.addWidget(launch_button)
+        self.launch_actions = launch_actions
+        self.bottom_layout.addLayout(launch_actions)
 
         self.layout.addWidget(self.profile_frame, 1)
         self.layout.addLayout(self.bottom_layout)
@@ -355,12 +375,51 @@ class LaunchProfilePage(QWidget):
             )
 
         self.process_log_windows.append(log_window)
-        log_window.show()
+        self._update_log_button()
+        settings = self.app.settings_manager.get("game", GameSettings)
+        if settings.open_log_view_when_launch:
+            log_window.show()
 
         self.status_label.setText(self.app.tr_text("Launched!"))
 
         # Cleanup for status label
         self.status_label_cleanup()
+
+        main_window = self.app.main_window
+        if settings.action_after_launch == "close":
+            main_window.close()
+        elif settings.action_after_launch == "minimize":
+            main_window.showMinimized()
+
+    def _selected_profile_log(self) -> ProcessLogWindow | None:
+        profile_id = self.profile_button.property("profile_id")
+        if profile_id is None:
+            return None
+        return next(
+            (window for window in reversed(self.process_log_windows)
+             if window.profile_id == profile_id),
+            None,
+        )
+
+    def _update_log_button(self) -> None:
+        if self._selected_profile_log() is not None:
+            if self.launch_actions.indexOf(self.log_button) == -1:
+                self.launch_actions.addWidget(self.log_button)
+            self.log_button.show()
+        else:
+            self.log_button.hide()
+            self.launch_actions.removeWidget(self.log_button)
+
+    def show_selected_profile_log(self) -> None:
+        # Release the button's visual state before activating another window.
+        self.log_button.setDown(False)
+        self.log_button.clearFocus()
+        self.log_button.update()
+        window = self._selected_profile_log()
+        if window is not None:
+            window.showNormal()
+            window.raise_()
+            window.activateWindow()
 
     def status_label_cleanup(self):
         timer = QTimer(self)
@@ -378,6 +437,7 @@ class LaunchProfilePage(QWidget):
             self.profile_button.setProperty("profile_id", None)
             self.profile_button.name_label.setText(self.app.tr_text("No profiles available"))
             self.profile_button.version_label.clear()
+            self._update_log_button()
             return
 
         selected_id = self.profile_button.property("profile_id")
@@ -445,6 +505,7 @@ class LaunchProfilePage(QWidget):
     def select_profile(self, profile: ProfileSummary) -> None:
         # Update select profile id
         self.profile_button.set_profile(profile)
+        self._update_log_button()
         self.profile_popup.hide()
         self.profile_button.set_popup_open(False)
 
@@ -486,3 +547,41 @@ class LaunchProfilePage(QWidget):
 
         self.launch_manager.start_launch_task(launch_profile)
         # The log view window creation process has been moved to the method self.launch_finished, move to there!
+
+    def show_profile_launch_log_view(self, profile_id: str):
+        """
+        Show processLogView that related to the provided profile id
+        :param profile_id:
+        :return:
+        """
+        profile = self.profile_manager.get_profile(profile_id)
+
+        if not profile:
+            return
+
+        if profile_id not in [window.profile_id for window in self.process_log_windows]:
+            return
+
+        related_windows = [window for window in self.process_log_windows if window.profile_id == profile_id]
+
+        if len(related_windows) > 1:
+            request = AskForRequest(
+                self.app.tr_text("Launch Request"),
+                self.app.tr_text(
+                    "Multiple log views (among {count} windows) are running for profile {profile}. Are you sure you want to open all log view?",
+                    profile=profile.name,
+                    count=len(related_windows),
+                ),
+            )
+
+            if not request.wait(60):
+                self.widget_mgr.signal.show_error_message.emit(
+                    self.app.tr_text("Time out waiting for request for open window.")
+                )
+                return
+
+            if not request.result() is True:
+                return
+
+        for window in related_windows:
+            window.show()

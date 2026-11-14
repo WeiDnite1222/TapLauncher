@@ -1,3 +1,4 @@
+import os
 import platform
 import sys
 import traceback
@@ -12,11 +13,12 @@ try:
 except ModuleNotFoundError:  # Python 3.10
     import tomli as tomllib
 
-from PySide6.QtCore import QSize
+from PySide6.QtCore import QSize, QProcess
 from PySide6.QtGui import QIcon, QPixmap, QPalette, QColor
 from PySide6.QtWidgets import QApplication, QStyle, QToolButton, QWidget
 
 from constant import LAUNCHER_VERSION
+from core_lib.common.exception import ConfigValidationError
 from core_lib.qt.hack import move_window_to_center, is_light_theme, \
     recolor_icon
 from core_lib.qt import messagebox
@@ -48,8 +50,26 @@ PALETTE_ROLES = {
 }
 
 
+def get_official_launcher_game_dir() -> Path:
+    """
+    Get the official launcher game directory.
+    """
+    system = platform.system()
+    home = Path.home()
+
+    if system == "Windows":
+        appdata = os.environ.get("APPDATA")
+        return (Path(appdata) if appdata else home / "AppData" / "Roaming") / ".minecraft"
+    if system == "Darwin":
+        return home / "Library" / "Application Support" / "minecraft"
+    if system == "Linux":
+        return home / ".minecraft"
+
+    raise OSError(f"Unsupported operating system: {system}")
+
+
 class Launcher(QApplication, LauncherObject):
-    def __init__(self, logger, log_capture_handler, debug: bool = False):
+    def __init__(self, logger, log_capture_handler, custom_game_dir: Path, debug: bool = False):
         super().__init__()
         self._system_palette = QPalette(self.palette()) # theme
 
@@ -62,6 +82,7 @@ class Launcher(QApplication, LauncherObject):
         # dirs
         self.program_dir = Path(__file__).parent
         self.work_dir = Path.cwd()
+        self.custom_game_dir = custom_game_dir
 
         # Widget (Signal, Event)
         self.widget_manager = WidgetManager()
@@ -255,8 +276,18 @@ class Launcher(QApplication, LauncherObject):
 
     @property
     def default_game_dir(self) -> Path:
-        # Completely with official Minecraft launcher
-        return self.work_dir
+        return self.work_dir / "game"
+
+    @property
+    def game_dir(self) -> Path:
+        compatibility_mode = self.settings_manager.get("general", GeneralSettings).compatibility_mode
+
+        if compatibility_mode == "official-launcher":
+            # Share the official launcher's default game directory.
+            official_dir = get_official_launcher_game_dir()
+            return official_dir
+
+        return self.custom_game_dir or self.default_game_dir
 
     @property
     def resources_dir(self) -> Path:
@@ -463,9 +494,35 @@ class Launcher(QApplication, LauncherObject):
             try:
                 self.settings_manager.load()
             except Exception as e:
+                raw_traceback = traceback.format_exc()
+                self.settings_manager.load_defaults(prevent_save=True)
+                if isinstance(e, ConfigValidationError):
+                    problems = []
+                    for section, error in e.errors.items():
+                        for detail in error.errors(include_url=False):
+                            field = ".".join(str(part) for part in detail["loc"])
+                            location = f"[{section}] {field}" if field else f"[{section}]"
+                            problems.append(f"- {location}: {detail['msg']}")
+
+                    summary = "Some settings contain invalid values:\n" + "\n".join(problems)
+                elif isinstance(e, tomllib.TOMLDecodeError):
+                    summary = f"The settings file contains invalid TOML syntax.\n{e}"
+                elif isinstance(e, OSError):
+                    summary = (
+                        "The settings file could not be read.\n"
+                        "Check that the file exists and that you have permission to read it."
+                    )
+                else:
+                    summary = "An unexpected error prevented the settings from loading."
+
                 messagebox.error_with_plain_text(
                     None,
                     "Settings Error",
-                    "An unexpected error occurred while loading settings.",
-                    f"Below are the raw data of the error\n\nError: {str(e)}\n\nTraceback:\n{traceback.format_exc()}",
+                    "Settings could not be loaded. Default settings are now in use.\n"
+                    "The original settings file will not be overwritten.\n"
+                    "Settings changes made during this session will not be saved.",
+                    f"Settings file: {self.settings_manager.path}\n\n"
+                    f"{summary}\n\n"
+                    "Correct the settings file and restart the launcher to try again.\n\n"
+                    f"--- Raw details (Python traceback) ---\n{raw_traceback}",
                 )

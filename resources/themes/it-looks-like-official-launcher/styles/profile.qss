@@ -17,8 +17,7 @@ QPushButton#profileItem {
 QPushButton#profileItem:hover { background: #3c8527; }
 QPushButton#profileItem:focus { border-color: #a0e081; }
 QPushButton#profileItem QLabel[itemHovered="true"] { color: #ffffff; background: transparent; }
-QPushButton#launchButton {
-    min-width: 150px;
+QPushButton#launchButton, QPushButton#logButton {
     min-height: 32px;
     font-size: 18px;
     font-weight: bold;
@@ -29,10 +28,13 @@ QPushButton#launchButton {
     border-bottom: 5px solid #1d4d13;
     border-radius: 0;
 }
-QPushButton#launchButton:hover { background: #4f9f30; }
-QPushButton#launchButton:pressed { background: #2f6b1f; border-top-color: #1d4d13; border-bottom-color: #3c8527; }
-QPushButton#launchButton:focus { border-left-color: #b5f293; border-right-color: #b5f293; }
-QPushButton#launchButton:disabled { background: #3c3c3c; color: #858585; border-color: #505050; }
+QPushButton#launchButton:hover, QPushButton#logButton:hover { background: #4f9f30; }
+QPushButton#launchButton:pressed, QPushButton#logButton:pressed { background: #2f6b1f; border-top-color: #1d4d13; border-bottom-color: #3c8527; }
+QPushButton#launchButton:focus, QPushButton#logButton:focus { border-left-color: #b5f293; border-right-color: #b5f293; }
+QPushButton#launchButton:disabled, QPushButton#logButton:disabled { background: #3c3c3c; color: #858585; border-color: #505050; }
 QFrame#profileFrame { background: #202020; border: 1px solid #505050; border-radius: 0; }
 QFrame#header { background: #202020; border-bottom: 1px solid #505050; }
 QLabel#headerLabel { color: #ffffff; background: transparent; font-size: 22px; font-weight: bold; }
+
+QPushButton#launchButton { min-width: 150px; }
+QPushButton#logButton { min-width: 0; padding-left: 0; padding-right: 0; }

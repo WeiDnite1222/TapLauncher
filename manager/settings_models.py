@@ -28,6 +28,8 @@ class GeneralSettings(WarnExtraModel):
 
     language: Literal["en", "zh-TW"] = "zh-TW"
 
+    compatibility_mode: Literal["none", "official-launcher"] = 'none'
+
 
 class AppearanceSettings(WarnExtraModel):
     model_config = ConfigDict()
@@ -49,6 +51,7 @@ class AccountSettings(WarnExtraModel):
 
     credentials_save_method: Literal["system-keyring", "file"] = "system-keyring"
     custom_client_id: UUID | None = None
+    enable_token_updater: bool = True
     token_refresh_interval: int = 600
     @field_validator("custom_client_id", mode="before")
     @classmethod
@@ -89,3 +92,6 @@ class PageBarSettings(WarnExtraModel):
 class GameSettings(WarnExtraModel):
     verify_hash_on_download: bool = True
     verify_hash_on_launch: bool = True
+
+    open_log_view_when_launch: bool = True
+    action_after_launch: Literal["close", "stay-open", "minimize"] = "stay-open"

@@ -52,8 +52,7 @@ QPushButton#profileItem QLabel[itemHovered="true"] {
     background: transparent;
 }
 
-QPushButton#launchButton {
-    min-width: 150px;
+QPushButton#launchButton, QPushButton#logButton {
     font-size: 15px;
     font-weight: 600;
     background-color: palette(button);
@@ -63,21 +62,21 @@ QPushButton#launchButton {
     padding: 6px 14px;
 }
 
-QPushButton#launchButton:hover {
+QPushButton#launchButton:hover, QPushButton#logButton:hover {
     background-color: palette(midlight);
     color: palette(button-text);
 }
 
-QPushButton#launchButton:focus {
+QPushButton#launchButton:focus, QPushButton#logButton:focus {
     border-color: palette(highlight);
 }
 
-QPushButton#launchButton:pressed {
+QPushButton#launchButton:pressed, QPushButton#logButton:pressed {
     background-color: palette(highlight);
     color: palette(highlighted-text);
 }
 
-QPushButton#launchButton:disabled {
+QPushButton#launchButton:disabled, QPushButton#logButton:disabled {
     color: palette(placeholder-text);
 }
 
@@ -91,3 +90,6 @@ QFrame#profileFrame {
     border: 1px solid palette(mid);
     border-radius: 10px;
 }
+
+QPushButton#launchButton { min-width: 150px; }
+QPushButton#logButton { min-width: 0; padding-left: 0; padding-right: 0; }

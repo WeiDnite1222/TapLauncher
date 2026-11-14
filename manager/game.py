@@ -61,10 +61,10 @@ class ManifestManager:
     #
     @property
     def version_manifest_path(self) -> Path:
-        return Path(self.app.work_dir, "versions", "version_manifest_v2.json")
+        return Path(self.app.game_dir, "versions", "version_manifest_v2.json")
 
     def get_specific_version_manifest_path(self, target_version: str) -> Path | None:
-        return Path(self.app.work_dir, "versions", target_version, f"{target_version}.json")
+        return Path(self.app.game_dir, "versions", target_version, f"{target_version}.json")
 
     def _manifest_rebuild_text(self, text: str, **values) -> str:
         translate = getattr(self.app, "tr_text", None)
@@ -73,7 +73,7 @@ class ManifestManager:
     def _get_manifest_backup_path(self, version_id: str) -> Path:
         if not validate_minecraft_version(version_id):
             raise ValueError("Invalid version ID: {}".format(version_id))
-        root = Path(self.app.work_dir).resolve()
+        root = Path(self.app.game_dir).resolve()
         path = root / "cache" / "version_manifests" / "{}.json".format(version_id)
         if not path.resolve().is_relative_to(root):
             raise ValueError("Manifest backup path is outside the launcher directory.")
@@ -87,7 +87,7 @@ class ManifestManager:
                 source = self.get_specific_version_manifest_path(version_id)
                 if source is None:
                     raise ValueError("Version manifest path is unavailable")
-                root = Path(self.app.work_dir).resolve() / "versions"
+                root = Path(self.app.game_dir).resolve() / "versions"
                 if not source.resolve().is_relative_to(root):
                     raise ValueError("Version manifest path is outside the versions directory")
                 payload = source.read_bytes()
@@ -105,7 +105,7 @@ class ManifestManager:
             try:
                 backup = self._get_manifest_backup_path(version_id)
                 path = self.get_specific_version_manifest_path(version_id)
-                root = Path(self.app.work_dir).resolve() / "versions"
+                root = Path(self.app.game_dir).resolve() / "versions"
                 if path is None or not path.resolve().is_relative_to(root):
                     raise ValueError("Version manifest path is outside the versions directory")
                 # Another launch may have completed recovery while this one waited.
@@ -447,7 +447,7 @@ class ManifestManager:
             )
 
         # Locally created modded and custom versions.
-        versions_dir = Path(self.app.work_dir, "versions")
+        versions_dir = Path(self.app.game_dir, "versions")
 
         for manifest_path in versions_dir.glob("*/*.json"):
             try:
@@ -1003,7 +1003,7 @@ class GameFileManager:
                 assets_dir,
                 no_hash_check=not verify_hash,
                 progress_callback=callback,
-                launcher_root=self.app.work_dir,
+                launcher_root=self.app.game_dir,
             )
 
             result, fails = self.redownload_files(fails, verify_hash=verify_hash)
@@ -1169,7 +1169,7 @@ class GameFileManager:
             if vanilla is None:
                 raise LoaderInstallError("Unable to load the vanilla manifest.")
 
-            root = Path(self.app.work_dir).resolve()
+            root = Path(self.app.game_dir).resolve()
             libraries_dir = root / "libraries"
             client_jar = root / "versions" / minecraft_version / "{}.jar".format(minecraft_version)
 
@@ -1370,9 +1370,9 @@ class LaunchManager:
             java_major_version = java_version.get("majorVersion")
 
             # Game paths
-            core_file_path = Path(self.app.work_dir, "versions", client_version_id, f"{client_version_id}.jar")
-            natives_dir = Path(self.app.work_dir, "versions", version_id, "natives")
-            libraries_dir = Path(self.app.work_dir, "libraries")
+            core_file_path = Path(self.app.game_dir, "versions", client_version_id, f"{client_version_id}.jar")
+            natives_dir = Path(self.app.game_dir, "versions", version_id, "natives")
+            libraries_dir = Path(self.app.game_dir, "libraries")
 
             game_dir = profile.game_dir
 
@@ -1432,8 +1432,8 @@ class LaunchManager:
                 )
 
             # Asset
-            default_assets_dir = Path(self.app.work_dir, "assets")
-            if not check_assets_exist(version_manifest, default_assets_dir, launcher_root=self.app.work_dir):
+            default_assets_dir = Path(self.app.game_dir, "assets")
+            if not check_assets_exist(version_manifest, default_assets_dir, launcher_root=self.app.game_dir):
                 request = GameFileDownloadRequest(
                     "download_assets",
                     (version_id, default_assets_dir, version_manifest)
@@ -1449,7 +1449,7 @@ class LaunchManager:
                         "Unable to launch game due to certain assets download failure."
                     )
 
-            assets_dir = find_correct_assets_dir(asset_id, default_assets_dir, self.app.work_dir)
+            assets_dir = find_correct_assets_dir(asset_id, default_assets_dir, self.app.game_dir)
 
             classpath = generate_classpath(
                 version_manifest,

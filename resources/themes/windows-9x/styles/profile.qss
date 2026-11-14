@@ -21,7 +21,10 @@ QPushButton#profileItem {
 }
 QPushButton#profileItem:hover { background: #000080; }
 QPushButton#profileItem QLabel[itemHovered="true"] { color: #ffffff; background: transparent; }
-QPushButton#launchButton { min-width: 150px; font-size: 14px; font-weight: bold; }
+QPushButton#launchButton, QPushButton#logButton {  font-size: 14px; font-weight: bold; }
 QFrame#profileFrame { background: #008080; border: 2px inset #c0c0c0; border-radius: 0; }
 QFrame#header { background: #000080; border: 0; }
 QLabel#headerLabel { color: #ffffff; background: transparent; font-size: 18px; font-weight: bold; }
+
+QPushButton#launchButton { min-width: 150px; }
+QPushButton#logButton { min-width: 0; padding-left: 0; padding-right: 0; }

@@ -22,6 +22,7 @@ import os
 import sys
 import argparse
 import logging
+from pathlib import Path
 
 from PySide6.QtWidgets import QApplication, QMainWindow
 from platformdirs import (
@@ -53,6 +54,7 @@ def main():
     parser.add_argument("-d", "--debug", action="store_true",
                         help="Enable debug mode", default=False)
     parser.add_argument("-wd", "--work-dir", default=None, help="Work directory")
+    parser.add_argument("-gd", "--game-dir", default=None, help="Game directory that used for storing game files")
 
     args, unknown = parser.parse_known_args()
     for arg in unknown:
@@ -82,6 +84,13 @@ def main():
             show_error(f"Specified work directory \"{work_dir}\" does not exist or is not a directory.")
             sys.exit(-1)
 
+    game_dir = args.game_dir
+
+    if game_dir is None:
+        game_dir = Path(work_dir, "game")
+
+    game_dir.mkdir(exist_ok=True)
+
     if os.getcwd() != args.work_dir:
         os.chdir(work_dir)
 
@@ -108,7 +117,7 @@ def main():
     logging.basicConfig(format=DEFAULT_FORMAT, datefmt=DEFAULT_DATE_FORMAT, level=level)
 
     # Start (the real) launcher
-    app = Launcher(logger, capture_handler, debug=debug)
+    app = Launcher(logger, capture_handler, custom_game_dir=game_dir, debug=debug)
     sys.exit(app.exec())
 
 

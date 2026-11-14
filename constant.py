@@ -1,4 +1,4 @@
-LAUNCHER_VERSION = "0.1.6-alpha-1"
+LAUNCHER_VERSION = "0.1.7-alpha"
 LAUNCHER_NAME = "TapLauncher"
 LAUNCHER_DIR_NAME = "TapLauncher"
 MAIN_REPO_URL = "https://repo.weispace.net/wei/Launcher/"
@@ -34,4 +34,4 @@ It aims to maintain maximum compatibility with the official Minecraft
  """
 LAUNCHER_DESCRIPTION_KEYWORD = "$ABOUT_THIS_LAUNCHER"
 LAUNCHER_DESCRIPTION_MARKDOWN_KEYWORD = "$ABOUT_THIS_LAUNCHER_MARKDOWN"
-WHEEL_PLUGIN_API_VERSION = "0.0.2"
+WHEEL_PLUGIN_API_VERSION = "0.0.3"

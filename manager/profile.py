@@ -22,6 +22,7 @@ from core_lib.game.profile import read_profile_file, is_profiles_valid, \
     set_last_used_time
 from core_lib.game.version_info import LATEST_VERSION_ALIASES
 from core_lib.qt.hack import is_qt_supported_image, image_to_data_url, base64_to_qicon, prepare_profile_icon
+from manager.settings_models import GeneralSettings
 from manager.widgets import AskForRequest
 
 DEFAuLT_PROFILE_RELATIVE_PATH = Path("launcher_profiles.json")
@@ -102,6 +103,7 @@ class ProfileManager(QObject):
         QObject.__init__(self, app)
         self.app = app
         self.widget_manager = widget_manager
+        self.settings_manager = app.settings_manager
         self.profiles = {}
 
 
@@ -116,6 +118,11 @@ class ProfileManager(QObject):
 
     @property
     def default_profile_path(self):
+        compatibility_mode = self.settings_manager.get("general", GeneralSettings).compatibility_mode
+
+        if compatibility_mode == "official-launcher":
+            return Path(self.app.game_dir, DEFAuLT_PROFILE_RELATIVE_PATH)
+
         return Path(self.app.work_dir, DEFAuLT_PROFILE_RELATIVE_PATH)
 
     def register_plugin_apis(self, plugin_manager):
@@ -346,7 +353,7 @@ class ProfileManager(QObject):
         if request.game_dir is not None:
             game_dir = Path(request.game_dir).as_posix()
         else:
-            default_game_dir = self.app.default_game_dir
+            default_game_dir = self.app.game_dir
             game_dir = default_game_dir.as_posix()
 
         try:
@@ -704,7 +711,7 @@ class ProfileManager(QObject):
         game_dir = (
             profile.game_dir
             if profile.game_dir is not None
-            else self.app.default_game_dir
+            else self.app.game_dir
         )
 
         return LaunchProfile(

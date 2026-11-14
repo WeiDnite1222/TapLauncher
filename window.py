@@ -326,6 +326,7 @@ class LauncherMainWindow(QMainWindow):
 
         # Apply page bar settings
         self.apply_page_bar_settings()
+        self.apply_stacked_page()
         self.toolbar.position_changed.connect(self.save_page_bar_position)
 
         # Bind signal event
@@ -692,13 +693,28 @@ class LauncherMainWindow(QMainWindow):
         return Path(selected) if selected else None
 
     def apply_page_bar_settings(self):
+        """
+        Apply page bar settings. (Such as page bar position)
+        :return:
+        """
         settings = self.app.settings_manager.get("page-bar", PageBarSettings)
         self.addToolBar(self.page_bar_areas[settings.page_bar_position], self.toolbar)
         self.toolbar.update_all()
-        focus = settings.focus_at_after_restart or settings.last_focused_page
-        self._pending_page_button = focus
-        button = self.toolbar.buttons.get(focus, self.home_button)
-        self.set_current_page(button.page, button, persist=False)
+
+    def apply_stacked_page(self):
+        """
+        Apply page bar settings. (Such as change focus page to last focused page)
+        :return:
+        """
+        settings = self.app.settings_manager.get("page-bar", PageBarSettings)
+        last_focused_page = settings.last_focused_page
+        focus_button = self.home_button
+        if settings.focus_at_after_restart:
+            focus_button = self.toolbar.buttons.get(last_focused_page,
+                                             self.home_button)
+
+        self._pending_page_button = focus_button
+        self.set_current_page(focus_button.page, focus_button, persist=False)
 
     page_bar_areas = {
         "left": Qt.ToolBarArea.LeftToolBarArea,
